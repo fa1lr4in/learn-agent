@@ -23,6 +23,19 @@ def call_model(payload: dict, api_key: str) -> dict:
         return json.load(response)
 
 
+def get_api_key() -> str:
+    """Read a key from the environment or the local terminal without saving it."""
+    try:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            api_key = getpass.getpass("\n请输入 DeepSeek API Key（输入不显示）：").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise SystemExit("\n已取消输入。") from None
+    if not api_key:
+        raise SystemExit("未提供 API Key。可以先使用 --preview 学习请求结构。")
+    return api_key
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="第一课：观察一次模型调用")
     parser.add_argument("prompt", nargs="?", default="请用两句话解释什么是 Agent。")
@@ -47,15 +60,7 @@ def main() -> None:
         print("\n预览结束，没有发送网络请求。")
         return
 
-    try:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        if not api_key:
-            api_key = getpass.getpass("\n请输入 DeepSeek API Key（输入不显示）：").strip()
-    except (EOFError, KeyboardInterrupt):
-        raise SystemExit("\n已取消输入。") from None
-    if not api_key:
-        raise SystemExit("未提供 API Key。可以先使用 --preview 学习请求结构。")
-
+    api_key = get_api_key()
     try:
         response = call_model(payload, api_key)
     except urllib.error.HTTPError as error:
