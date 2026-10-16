@@ -39,6 +39,23 @@ class ChatTests(unittest.TestCase):
         self.assertEqual([message["content"] for message in history[1:]], ["我的项目叫小灯。", "记住了。", "我的项目叫什么？"])
         key.assert_called_once()
 
+    def test_clear_keeps_system_and_sends_only_new_question(self):
+        requests, key, _ = self.run_chat(
+            ["--chat", "我的项目叫小灯。"],
+            iter(["记住了。", "你还没有告诉我项目名。"]),
+            ["/clear", "我的项目叫什么？", "/exit"],
+        )
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(
+            requests[1]["messages"],
+            [requests[0]["messages"][0], {"role": "user", "content": "我的项目叫什么？"}],
+        )
+        key.assert_called_once()
+
+    def test_clear_does_not_send_request(self):
+        requests, _, _ = self.run_chat(["--chat", "你好"], iter(["你好。"]), ["/clear", "/exit"])
+        self.assertEqual(len(requests), 1)
+
     def test_single_request_does_not_wait_for_followup(self):
         requests, _, user_input = self.run_chat(["你好"], iter(["你好。"]), [])
         self.assertEqual(len(requests), 1)

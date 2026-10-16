@@ -40,7 +40,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="调用 DeepSeek 并查看请求与响应")
     parser.add_argument("prompt", nargs="?", default="请用两句话解释什么是 Agent。")
     parser.add_argument("--preview", action="store_true", help="只查看请求体，不连接 API")
-    parser.add_argument("--chat", action="store_true", help="发送首条消息后继续对话，输入 /exit 退出")
+    parser.add_argument("--chat", action="store_true", help="继续对话，输入 /clear 清空历史，/exit 退出")
     args = parser.parse_args()
 
     messages = [
@@ -92,14 +92,20 @@ def main() -> None:
             return
 
         try:
-            prompt = input("\n你> ").strip()
-            while not prompt:
-                prompt = input("你> ").strip()
+            while True:
+                prompt = input("\n你> ").strip()
+                if not prompt:
+                    continue
+                if prompt.lower() == "/exit":
+                    print("对话已结束。")
+                    return
+                if prompt.lower() == "/clear":
+                    del messages[1:]
+                    print("已清空对话历史，保留系统指令。")
+                    continue
+                break
         except (EOFError, KeyboardInterrupt):
             print("\n对话已结束。")
-            return
-        if prompt.lower() == "/exit":
-            print("对话已结束。")
             return
 
         messages.append({"role": "user", "content": prompt})
