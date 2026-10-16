@@ -1,4 +1,4 @@
-"""Lesson 01: inspect a single DeepSeek model request and response."""
+"""Inspect a single DeepSeek model request and response."""
 
 import argparse
 import getpass
@@ -37,7 +37,7 @@ def get_api_key() -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="第一课：观察一次模型调用")
+    parser = argparse.ArgumentParser(description="调用 DeepSeek 并查看请求与响应")
     parser.add_argument("prompt", nargs="?", default="请用两句话解释什么是 Agent。")
     parser.add_argument("--preview", action="store_true", help="只查看请求体，不连接 API")
     args = parser.parse_args()
@@ -64,7 +64,7 @@ def main() -> None:
     try:
         response = call_model(payload, api_key)
     except urllib.error.HTTPError as error:
-        raise SystemExit(f"DeepSeek 返回 HTTP {error.code}，请按第一课的错误排查说明检查。") from None
+        raise SystemExit(f"DeepSeek 返回 HTTP {error.code}，请检查密钥、余额、模型参数或请求频率。") from None
     except (urllib.error.URLError, TimeoutError) as error:
         raise SystemExit(f"连接模型服务失败：{error}") from None
 

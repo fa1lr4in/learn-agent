@@ -1,4 +1,4 @@
-"""Lesson 02: inspect and approve one file-reading tool call."""
+"""Inspect and approve one file-reading tool call."""
 
 import argparse
 import json
@@ -79,7 +79,7 @@ def run_demo(payload: dict, api_key: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="第二课：执行一次经过确认的工具调用")
+    parser = argparse.ArgumentParser(description="执行一次经过确认的工具调用")
     parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读取练习文件")
     args = parser.parse_args()
     payload = {
