@@ -80,13 +80,14 @@ def run_demo(payload: dict, api_key: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="执行一次经过确认的工具调用")
+    parser.add_argument("prompt", nargs="?", default="请读取 project.txt，准确告诉我项目名称和本次实验编号。")
     parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读取练习文件")
     args = parser.parse_args()
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
             {"role": "system", "content": "需要文件内容时调用工具，收到真实结果后再用中文回答。"},
-            {"role": "user", "content": "请读取 project.txt，准确告诉我项目名称和本次实验编号。"},
+            {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,
         "tool_choice": "auto",

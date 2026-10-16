@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -39,6 +40,31 @@ class ToolCallTests(unittest.TestCase):
                 tool_call.run_demo(self.payload, "offline-placeholder")
         model.assert_called_once()
         reader.assert_not_called()
+
+    def test_text_reply_does_not_execute_tool_or_ask_for_confirmation(self):
+        response = {"choices": [{"message": {"role": "assistant", "content": "你好。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", return_value=response) as model, patch("tool_call.read_file") as reader:
+            with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
+                tool_call.run_demo(self.payload, "offline-placeholder")
+        model.assert_called_once()
+        reader.assert_not_called()
+        approval.assert_not_called()
+
+    def test_preview_shows_question_without_key_network_or_file_access(self):
+        for arguments, expected in [
+            ([], "请读取 project.txt，准确告诉我项目名称和本次实验编号。"),
+            (["请用一句话介绍自己。"], "请用一句话介绍自己。"),
+        ]:
+            with self.subTest(arguments=arguments):
+                with patch.object(sys, "argv", ["tool_call.py", "--preview", *arguments]):
+                    with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
+                        with patch("tool_call.read_file") as reader, contextlib.redirect_stdout(io.StringIO()) as output:
+                            tool_call.main()
+                payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
+                self.assertEqual(payload["messages"][-1], {"role": "user", "content": expected})
+                key.assert_not_called()
+                model.assert_not_called()
+                reader.assert_not_called()
 
     def test_unapproved_path_is_rejected_before_confirmation(self):
         self.request["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "../chat.py"})
