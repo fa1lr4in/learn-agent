@@ -1,4 +1,4 @@
-"""Inspect a single DeepSeek model request and response."""
+"""Chat with DeepSeek and inspect requests and responses."""
 
 import argparse
 import getpass
@@ -40,6 +40,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="调用 DeepSeek 并查看请求与响应")
     parser.add_argument("prompt", nargs="?", default="请用两句话解释什么是 Agent。")
     parser.add_argument("--preview", action="store_true", help="只查看请求体，不连接 API")
+    parser.add_argument("--chat", action="store_true", help="发送首条消息后继续对话，输入 /exit 退出")
     args = parser.parse_args()
 
     messages = [
@@ -61,29 +62,49 @@ def main() -> None:
         return
 
     api_key = get_api_key()
-    try:
-        response = call_model(payload, api_key)
-    except urllib.error.HTTPError as error:
-        raise SystemExit(f"DeepSeek 返回 HTTP {error.code}，请检查密钥、余额、模型参数或请求频率。") from None
-    except (urllib.error.URLError, TimeoutError) as error:
-        raise SystemExit(f"连接模型服务失败：{error}") from None
+    while True:
+        try:
+            response = call_model(payload, api_key)
+        except urllib.error.HTTPError as error:
+            raise SystemExit(f"DeepSeek 返回 HTTP {error.code}，请检查密钥、余额、模型参数或请求频率。") from None
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise SystemExit(f"连接模型服务失败：{error}") from None
 
-    print("\n[模型服务返回的 JSON]")
-    print(json.dumps(response, ensure_ascii=False, indent=2))
+        print("\n[模型服务返回的 JSON]")
+        print(json.dumps(response, ensure_ascii=False, indent=2))
 
-    choice = response["choices"][0]
-    print("\n[助手回答]")
-    print(choice["message"].get("content") or "（本次没有返回文本回答）")
-    print(f"\n停止原因：{choice['finish_reason']}")
-    if choice["finish_reason"] == "length":
-        print("提示：输出达到长度限制，回答可能不完整。")
+        choice = response["choices"][0]
+        content = choice["message"].get("content") or ""
+        print("\n[助手回答]")
+        print(content or "（本次没有返回文本回答）")
+        print(f"\n停止原因：{choice['finish_reason']}")
+        if choice["finish_reason"] == "length":
+            print("提示：输出达到长度限制，回答可能不完整。")
 
-    usage = response.get("usage") or {}
-    print(
-        f"Token 用量：输入 {usage.get('prompt_tokens', '未知')}，"
-        f"输出 {usage.get('completion_tokens', '未知')}，"
-        f"合计 {usage.get('total_tokens', '未知')}"
-    )
+        usage = response.get("usage") or {}
+        print(
+            f"Token 用量：输入 {usage.get('prompt_tokens', '未知')}，"
+            f"输出 {usage.get('completion_tokens', '未知')}，"
+            f"合计 {usage.get('total_tokens', '未知')}"
+        )
+        messages.append({"role": "assistant", "content": content})
+        if not args.chat:
+            return
+
+        try:
+            prompt = input("\n你> ").strip()
+            while not prompt:
+                prompt = input("你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n对话已结束。")
+            return
+        if prompt.lower() == "/exit":
+            print("对话已结束。")
+            return
+
+        messages.append({"role": "user", "content": prompt})
+        print("\n[发送给模型的请求体]")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
