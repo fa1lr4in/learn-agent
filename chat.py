@@ -71,6 +71,20 @@ def main() -> None:
     print("\n[模型服务返回的 JSON]")
     print(json.dumps(response, ensure_ascii=False, indent=2))
 
+    choice = response["choices"][0]
+    print("\n[助手回答]")
+    print(choice["message"].get("content") or "（本次没有返回文本回答）")
+    print(f"\n停止原因：{choice['finish_reason']}")
+    if choice["finish_reason"] == "length":
+        print("提示：输出达到长度限制，回答可能不完整。")
+
+    usage = response.get("usage") or {}
+    print(
+        f"Token 用量：输入 {usage.get('prompt_tokens', '未知')}，"
+        f"输出 {usage.get('completion_tokens', '未知')}，"
+        f"合计 {usage.get('total_tokens', '未知')}"
+    )
+
 
 if __name__ == "__main__":
     main()
