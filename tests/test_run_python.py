@@ -61,6 +61,55 @@ class RunPythonTests(unittest.TestCase):
         self.assertEqual([entry["source"] for entry in decisions], ["user", "user"])
         self.assertEqual(len(self.payload["messages"]), 2)
 
+    def test_agent_repairs_script_after_real_error_and_runs_again(self):
+        broken_code = "numbers = list(range(1, 101))\nprint(sum(nubmers))\n"
+        fixed_code = "numbers = list(range(1, 101))\nprint(sum(numbers))\n"
+        responses = []
+        for call_id, name, arguments in [
+            ("call_write_broken", "write_file", {"path": "main.py", "content": broken_code}),
+            ("call_run_broken", "run_python", {"path": "main.py"}),
+            ("call_write_fixed", "write_file", {"path": "main.py", "content": fixed_code}),
+            ("call_run_fixed", "run_python", {"path": "main.py"}),
+        ]:
+            response = copy.deepcopy(self.response)
+            response["choices"][0]["message"]["tool_calls"][0] = {
+                "id": call_id, "type": "function", "function": {
+                    "name": name, "arguments": json.dumps(arguments),
+                },
+            }
+            responses.append(response)
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+            with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(model.call_count, 5)
+        self.assertEqual(approval.call_count, 4)
+        self.assertIn("覆盖现有 main.py", approval.call_args_list[2].args[0])
+        failure = json.loads(model.call_args_list[2].args[0]["messages"][-1]["content"])
+        self.assertFalse(failure["ok"])
+        self.assertNotEqual(failure["exit_code"], 0)
+        self.assertIn("NameError", failure["stderr"])
+        self.assertIn("nubmers", failure["stderr"])
+        self.assertEqual(failure["stdout"], "")
+        history = model.call_args_list[-1].args[0]["messages"]
+        results = [message for message in history if message["role"] == "tool"]
+        self.assertEqual([message["tool_call_id"] for message in results], [
+            "call_write_broken", "call_run_broken", "call_write_fixed", "call_run_fixed",
+        ])
+        self.assertEqual(json.loads(results[1]["content"]), failure)
+        success = json.loads(results[-1]["content"])
+        self.assertTrue(success["ok"])
+        self.assertEqual(success["exit_code"], 0)
+        self.assertEqual(success["stdout"].strip(), "5050")
+        self.assertEqual(success["stderr"], "")
+        self.assertEqual((self.workspace / "main.py").read_text(encoding="utf-8"), fixed_code)
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertEqual([entry["source"] for entry in decisions], ["user"] * 4)
+        recorded_results = [entry["result"] for entry in entries if entry["event"] == "tool_result"]
+        self.assertEqual(recorded_results, [json.loads(message["content"]) for message in results])
+
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")
         tool_call.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')

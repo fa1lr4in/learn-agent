@@ -277,7 +277,7 @@ def main() -> None:
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。使用 write_file 保存完整文件，只能写入 report.md 报告或 main.py 脚本；只有写入工具返回 ok 为 true 后才能声称已经保存。需要验证代码时调用 run_python 运行 main.py，根据实际 exit_code、stdout 和 stderr 判断结果，不能凭推测声称运行成功。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
+            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。使用 write_file 保存完整文件，只能写入 report.md 报告或 main.py 脚本；只有写入工具返回 ok 为 true 后才能声称已经保存。需要验证代码时调用 run_python 运行 main.py，根据实际 exit_code、stdout 和 stderr 判断结果，不能凭推测声称运行成功。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容。脚本报错时先根据 stderr 修改代码，再重新运行验证；代码和参数未变化时不要反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,
