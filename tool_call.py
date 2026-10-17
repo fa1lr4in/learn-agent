@@ -77,13 +77,24 @@ def run_agent(payload: dict, api_key: str) -> None:
             print("已停止：本轮没有读取文件，也不会继续请求模型。")
             return
 
-        result = read_file(arguments["path"])
-        print("\n[Python 工具实际读取的内容]")
-        print(result)
+        path = arguments["path"]
+        try:
+            result = {"ok": True, "path": path, "content": read_file(path)}
+        except (OSError, UnicodeError) as error:
+            result = {
+                "ok": False,
+                "path": path,
+                "error": {
+                    "type": type(error).__name__,
+                    "message": "读取失败，请检查文件是否存在、是否有读取权限以及是否为 UTF-8 文本。",
+                },
+            }
+        print("\n[工具执行结果]")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         messages = [
             *request["messages"],
             {"role": "assistant", "content": message.get("content"), "tool_calls": calls},
-            {"role": "tool", "tool_call_id": tool_call["id"], "content": result},
+            {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)},
         ]
         request = {**request, "messages": messages}
 
@@ -96,7 +107,7 @@ def main() -> None:
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具，每轮最多调用一次；如需多个文件，分轮读取。收到足够的真实结果后用中文回答。"},
+            {"role": "system", "content": "需要文件内容时调用工具，每轮最多调用一次；如需多个文件，分轮读取。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,

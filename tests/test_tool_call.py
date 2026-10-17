@@ -30,7 +30,10 @@ class ToolCallTests(unittest.TestCase):
         followup = model.call_args_list[1].args[0]
         self.assertEqual([message["role"] for message in followup["messages"]], ["system", "user", "assistant", "tool"])
         self.assertEqual(followup["messages"][-1]["tool_call_id"], "call_test")
-        self.assertEqual(followup["messages"][-1]["content"], tool_call.read_file("project.txt"))
+        result = json.loads(followup["messages"][-1]["content"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["path"], "project.txt")
+        self.assertEqual(result["content"], tool_call.read_file("project.txt"))
         self.assertEqual(followup["tool_choice"], "auto")
         self.assertEqual(len(self.payload["messages"]), 2)
 
@@ -53,8 +56,61 @@ class ToolCallTests(unittest.TestCase):
         history = requests[-1]["messages"]
         self.assertEqual([message["role"] for message in history], ["system", "user", "assistant", "tool", "assistant", "tool"])
         self.assertEqual([history[index]["tool_call_id"] for index in (3, 5)], ["call_test", "call_next"])
-        self.assertEqual([history[index]["content"] for index in (3, 5)], ["项目资料", "下一步任务"])
+        results = [json.loads(history[index]["content"]) for index in (3, 5)]
+        self.assertTrue(all(result["ok"] for result in results))
+        self.assertEqual([result["content"] for result in results], ["项目资料", "下一步任务"])
         self.assertEqual(len(self.payload["messages"]), 2)
+
+    def test_read_errors_are_returned_to_model(self):
+        errors = [
+            FileNotFoundError("private-local-path"),
+            PermissionError("private-local-path"),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+        ]
+        final = {"choices": [{"message": {"content": "读取失败。"}, "finish_reason": "stop"}]}
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+                    with patch("tool_call.read_file", side_effect=error):
+                        with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+                            tool_call.run_agent(self.payload, "offline-placeholder")
+                self.assertEqual(model.call_count, 2)
+                message = model.call_args_list[1].args[0]["messages"][-1]
+                self.assertEqual(message["role"], "tool")
+                self.assertEqual(message["tool_call_id"], "call_test")
+                result = json.loads(message["content"])
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["path"], "project.txt")
+                self.assertEqual(result["error"]["type"], type(error).__name__)
+                self.assertNotIn("private-local-path", message["content"])
+                self.assertNotIn("content", result)
+
+    def test_model_can_choose_another_file_after_read_failure(self):
+        first = copy.deepcopy(self.response)
+        first["choices"][0]["message"]["tool_calls"][0]["id"] = "call_missing"
+        first["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "next_step.txt"})
+        final = {"choices": [{"message": {"content": "已根据项目资料回答。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", side_effect=[first, self.response, final]) as model:
+            with patch("tool_call.read_file", side_effect=[FileNotFoundError(), "项目名称：小灯"]) as reader:
+                with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                    tool_call.run_agent(self.payload, "offline-placeholder")
+        self.assertEqual(model.call_count, 3)
+        self.assertEqual(approval.call_count, 2)
+        self.assertEqual([call.args[0] for call in reader.call_args_list], ["next_step.txt", "project.txt"])
+        history = model.call_args_list[-1].args[0]["messages"]
+        failed, succeeded = [json.loads(history[index]["content"]) for index in (3, 5)]
+        self.assertFalse(failed["ok"])
+        self.assertTrue(succeeded["ok"])
+        self.assertEqual(succeeded["content"], "项目名称：小灯")
+
+    def test_repeated_read_errors_still_respect_request_limit(self):
+        with patch("tool_call.call_model", return_value=self.response) as model:
+            with patch("tool_call.read_file", side_effect=FileNotFoundError()) as reader:
+                with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()) as output:
+                    tool_call.run_agent(self.payload, "offline-placeholder")
+        self.assertEqual(model.call_count, tool_call.MAX_MODEL_CALLS)
+        self.assertEqual(reader.call_count, tool_call.MAX_MODEL_CALLS - 1)
+        self.assertIn("任务未完成", output.getvalue())
 
     def test_limit_stops_before_executing_another_tool(self):
         with patch.object(tool_call, "MAX_MODEL_CALLS", 3):
