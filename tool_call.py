@@ -94,7 +94,7 @@ def record_event(log_file: TextIO | None, event: str, **details) -> None:
     log_file.flush()
 
 
-def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None) -> str:
+def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_read: bool = False) -> str:
     request = {**payload, "tool_choice": "auto"}
     for step in range(1, MAX_MODEL_CALLS + 1):
         if step > 1:
@@ -150,9 +150,13 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None) -> st
             print(arguments["content"])
             action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
 
-        answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
-        approved = answer.strip().lower() == "y"
-        record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved)
+        if auto_read and name in ("read_file", "list_files"):
+            print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
+            approved, source = True, "auto_read"
+        else:
+            answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
+            approved, source = answer.strip().lower() == "y", "user"
+        record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source)
         if not approved:
             print("已停止：本轮没有执行工具，也不会继续请求模型。")
             return "user_denied"
@@ -189,9 +193,10 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None) -> st
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="运行经过逐次确认的 Agent 工具循环")
+    parser = argparse.ArgumentParser(description="运行带权限检查的 Agent 工具循环")
     parser.add_argument("prompt", nargs="?", default="请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，汇总项目名称、实验编号和下一步任务，用 write_file 将 Markdown 报告保存到 report.md，最后说明保存结果。")
     parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读写练习文件")
+    parser.add_argument("--auto-read", action="store_true", help="自动允许列出及读取两份练习文件并发送结果；写入仍需确认")
     args = parser.parse_args()
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
@@ -216,9 +221,9 @@ def main() -> None:
         log_path = LOG_DIR / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
         with log_path.open("x", encoding="utf-8") as log_file:
             print(f"\n[本次运行日志] {log_path}")
-            record_event(log_file, "run_start", max_model_calls=MAX_MODEL_CALLS)
+            record_event(log_file, "run_start", max_model_calls=MAX_MODEL_CALLS, auto_read=args.auto_read)
             try:
-                reason = run_agent(payload, api_key, log_file)
+                reason = run_agent(payload, api_key, log_file, auto_read=args.auto_read)
             except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                 reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
                 record_event(log_file, "run_end", reason=reason, error_type=type(error).__name__)

@@ -158,6 +158,114 @@ class ToolCallTests(unittest.TestCase):
         self.assertIn("[助手最终回答]\n报告已保存。", output.getvalue())
         self.assertNotIn("任务未完成", output.getvalue())
 
+    def test_auto_read_full_run_only_asks_before_writing(self):
+        content = "# 报告\n项目名称：小灯\n实验编号：7391"
+        steps = [
+            ("list_files", {}),
+            ("read_file", {"path": "project.txt"}),
+            ("read_file", {"path": "next_step.txt"}),
+            ("write_file", {"path": "report.md", "content": content}),
+        ]
+        responses = []
+        for index, (name, arguments) in enumerate(steps):
+            response = copy.deepcopy(self.response)
+            response["choices"][0]["message"]["tool_calls"][0] = {
+                "id": f"call_{index}", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)},
+            }
+            responses.append(response)
+        responses.append({"choices": [{"message": {"content": "已保存。"}, "finish_reason": "stop"}]})
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            (workspace / "project.txt").write_text("项目名称：小灯\n实验编号：7391", encoding="utf-8")
+            (workspace / "next_step.txt").write_text("下一步任务：学习 Agent 循环。", encoding="utf-8")
+            log_dir = workspace / "logs"
+            with patch.object(tool_call, "WORKSPACE", workspace), patch.object(tool_call, "LOG_DIR", log_dir):
+                with patch.object(sys, "argv", ["tool_call.py", "--auto-read"]), patch("tool_call.get_api_key", return_value="offline-placeholder"):
+                    with patch("tool_call.call_model", side_effect=responses) as model:
+                        with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                            tool_call.main()
+            self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content)
+            entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(model.call_count, 5)
+        approval.assert_called_once()
+        self.assertIn("创建 report.md", approval.call_args.args[0])
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertEqual([entry["source"] for entry in decisions], ["auto_read", "auto_read", "auto_read", "user"])
+        self.assertTrue(all(entry["approved"] for entry in decisions))
+        self.assertTrue(entries[0]["auto_read"])
+        self.assertEqual(entries[-1]["reason"], "stop")
+        self.assertTrue(all("auto_read" not in entry["payload"] for entry in entries if entry["event"] == "model_request"))
+
+    def test_auto_read_does_not_authorize_report_overwrite(self):
+        self.request["tool_calls"][0]["function"] = {
+            "name": "write_file", "arguments": json.dumps({"path": "report.md", "content": "新报告"}),
+        }
+        log_file = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            (workspace / "report.md").write_text("旧报告", encoding="utf-8")
+            with patch.object(tool_call, "WORKSPACE", workspace), patch("tool_call.call_model", return_value=self.response) as model:
+                with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
+                    reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+            self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), "旧报告")
+        model.assert_called_once()
+        approval.assert_called_once()
+        self.assertIn("覆盖现有 report.md", approval.call_args.args[0])
+        self.assertIn("新报告", output.getvalue())
+        self.assertEqual(reason, "user_denied")
+        decision = json.loads(log_file.getvalue().splitlines()[-1])
+        self.assertEqual(decision["source"], "user")
+        self.assertFalse(decision["approved"])
+
+    def test_auto_read_rejects_invalid_requests_before_authorization(self):
+        invalid = [
+            ("shell", {}),
+            ("read_file", {"path": "../chat.py"}),
+            ("list_files", {"path": "."}),
+            ("write_file", {"path": "project.txt", "content": "改写资料"}),
+            ("write_file", {"path": "report.md", "content": "报告", "auto_read": True}),
+        ]
+        for name, arguments in invalid:
+            with self.subTest(name=name, arguments=arguments):
+                self.request["tool_calls"][0]["function"] = {"name": name, "arguments": json.dumps(arguments)}
+                with patch("tool_call.call_model", return_value=self.response), patch("builtins.input") as approval:
+                    with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister, patch("tool_call.write_file") as writer:
+                        with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+                            tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                approval.assert_not_called()
+                reader.assert_not_called()
+                lister.assert_not_called()
+                writer.assert_not_called()
+
+    def test_auto_read_returns_file_error_to_model_without_confirmation(self):
+        final = {"choices": [{"message": {"content": "读取失败。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+            with patch("tool_call.read_file", side_effect=FileNotFoundError()), patch("builtins.input") as approval:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+        self.assertEqual(model.call_count, 2)
+        approval.assert_not_called()
+        self.assertEqual(reason, "stop")
+        result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["type"], "FileNotFoundError")
+
+    def test_auto_read_preview_does_not_read_write_or_log(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+            log_dir = Path(directory) / "logs"
+            with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "--preview"]):
+                with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
+                    with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister, patch("tool_call.write_file") as writer:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            tool_call.main()
+            self.assertFalse(log_dir.exists())
+        for operation in (key, model, reader, lister, writer):
+            operation.assert_not_called()
+
     def test_overwrite_requires_approval_and_shows_content(self):
         content = "# 新报告\n项目名称：小灯"
         self.request["tool_calls"][0]["function"] = {
@@ -404,6 +512,8 @@ class ToolCallTests(unittest.TestCase):
                 self.assertTrue(all(entry["time"].endswith("+00:00") for entry in entries))
                 self.assertEqual(entries[3]["tool_call_id"], "call_test")
                 self.assertTrue(entries[3]["approved"])
+                self.assertEqual(entries[3]["source"], "user")
+                self.assertFalse(entries[0]["auto_read"])
                 self.assertEqual(entries[4]["result"]["ok"], succeeds)
                 self.assertEqual(entries[4]["tool_call_id"], "call_test")
                 history = entries[5]["payload"]["messages"]
