@@ -127,6 +127,7 @@ class RunPythonTests(unittest.TestCase):
             ("call_test_broken", "run_python", {"path": "test_main.py"}),
             ("call_write_fixed", "write_file", {"path": "main.py", "content": fixed_code}),
             ("call_test_fixed", "run_python", {"path": "test_main.py"}),
+            ("call_run_fixed", "run_python", {"path": "main.py"}),
         ]:
             response = copy.deepcopy(self.response)
             response["choices"][0]["message"]["tool_calls"][0] = {
@@ -140,8 +141,8 @@ class RunPythonTests(unittest.TestCase):
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
-        self.assertEqual(model.call_count, 5)
-        self.assertEqual(approval.call_count, 4)
+        self.assertEqual(model.call_count, 6)
+        self.assertEqual(approval.call_count, 5)
         self.assertIn("运行 test_main.py", approval.call_args_list[1].args[0])
         failure = json.loads(model.call_args_list[2].args[0]["messages"][-1]["content"])
         self.assertEqual(failure["path"], "test_main.py")
@@ -149,18 +150,24 @@ class RunPythonTests(unittest.TestCase):
         self.assertNotEqual(failure["exit_code"], 0)
         self.assertIn("4950 != 5050", failure["stderr"])
         self.assertIn("FAILED", failure["stderr"])
-        success = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        success = json.loads(model.call_args_list[4].args[0]["messages"][-1]["content"])
         self.assertTrue(success["ok"])
         self.assertEqual(success["exit_code"], 0)
         self.assertIn("Ran 4 tests", success["stderr"])
         self.assertIn("OK", success["stderr"])
+        final_run = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertTrue(final_run["ok"])
+        self.assertEqual(final_run["path"], "main.py")
+        self.assertEqual(final_run["exit_code"], 0)
+        self.assertEqual(final_run["stdout"].strip(), "5050")
+        self.assertEqual(final_run["stderr"], "")
         self.assertEqual((self.workspace / "main.py").read_text(encoding="utf-8"), fixed_code)
         self.assertEqual((self.workspace / "test_main.py").read_bytes(), test_content)
         entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
         decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
-        self.assertEqual([entry["source"] for entry in decisions], ["user"] * 4)
+        self.assertEqual([entry["source"] for entry in decisions], ["user"] * 5)
         executions = [entry["result"] for entry in entries if entry["event"] == "tool_result" and entry["tool"] == "run_python"]
-        self.assertEqual(executions, [failure, success])
+        self.assertEqual(executions, [failure, success, final_run])
 
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")

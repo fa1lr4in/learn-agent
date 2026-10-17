@@ -18,7 +18,7 @@ WRITABLE_FILES = ("report.md", PYTHON_FILE)
 RUNNABLE_FILES = (PYTHON_FILE, "test_main.py")
 WORKSPACE = Path(__file__).parent / "workspace"
 LOG_DIR = Path(__file__).parent / "logs"
-MAX_MODEL_CALLS = 5
+MAX_MODEL_CALLS = 8
 RUN_TIMEOUT = 10
 
 TOOLS = [
