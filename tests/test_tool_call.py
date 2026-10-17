@@ -3,7 +3,9 @@ import copy
 import io
 import json
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
@@ -60,6 +62,59 @@ class ToolCallTests(unittest.TestCase):
         self.assertTrue(all(result["ok"] for result in results))
         self.assertEqual([result["content"] for result in results], ["项目资料", "下一步任务"])
         self.assertEqual(len(self.payload["messages"]), 2)
+
+    def test_list_files_only_returns_allowed_existing_files(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            (workspace / "project.txt").write_text("项目资料", encoding="utf-8")
+            (workspace / "private.txt").write_text("不允许读取", encoding="utf-8")
+            (workspace / "next_step.txt").mkdir()
+            with patch.object(tool_call, "WORKSPACE", workspace):
+                self.assertEqual(tool_call.list_files(), ["project.txt"])
+
+    def test_list_then_read_dispatches_to_correct_functions(self):
+        listing = copy.deepcopy(self.response)
+        listing_call = listing["choices"][0]["message"]["tool_calls"][0]
+        listing_call["id"] = "call_list"
+        listing_call["function"] = {"name": "list_files", "arguments": "{}"}
+        final = {"choices": [{"message": {"content": "项目叫小灯。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", side_effect=[listing, self.response, final]) as model:
+            with patch("tool_call.list_files", return_value=["project.txt"]) as lister:
+                with patch("tool_call.read_file", return_value="项目名称：小灯") as reader:
+                    with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                        tool_call.run_agent(self.payload, "offline-placeholder")
+        lister.assert_called_once_with()
+        reader.assert_called_once_with("project.txt")
+        self.assertEqual(approval.call_count, 2)
+        self.assertEqual(model.call_count, 3)
+        history = model.call_args_list[-1].args[0]["messages"]
+        self.assertEqual([history[index]["tool_call_id"] for index in (3, 5)], ["call_list", "call_test"])
+        listed, read = [json.loads(history[index]["content"]) for index in (3, 5)]
+        self.assertEqual(listed, {"ok": True, "tool": "list_files", "files": ["project.txt"]})
+        self.assertEqual(read["tool"], "read_file")
+        self.assertEqual(read["content"], "项目名称：小灯")
+
+    def test_list_files_rejects_arguments_before_confirmation(self):
+        self.request["tool_calls"][0]["function"] = {"name": "list_files", "arguments": '{"path":".."}'}
+        with patch("tool_call.call_model", return_value=self.response), patch("tool_call.list_files") as lister:
+            with patch("builtins.input") as approval:
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+                    tool_call.run_agent(self.payload, "offline-placeholder")
+        lister.assert_not_called()
+        approval.assert_not_called()
+
+    def test_list_failure_is_returned_as_tool_result(self):
+        self.request["tool_calls"][0]["function"] = {"name": "list_files", "arguments": "{}"}
+        final = {"choices": [{"message": {"content": "无法列出文件。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+            with patch("tool_call.list_files", side_effect=PermissionError()):
+                with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+                    tool_call.run_agent(self.payload, "offline-placeholder")
+        result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["tool"], "list_files")
+        self.assertEqual(result["error"]["type"], "PermissionError")
 
     def test_read_errors_are_returned_to_model(self):
         errors = [
@@ -124,11 +179,17 @@ class ToolCallTests(unittest.TestCase):
         self.assertIn("已达到最多 3 次模型请求，任务未完成", output.getvalue())
 
     def test_refusal_does_not_read_or_call_model_again(self):
-        with patch("tool_call.call_model", return_value=self.response) as model, patch("tool_call.read_file") as reader:
-            with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
-                tool_call.run_agent(self.payload, "offline-placeholder")
-        model.assert_called_once()
-        reader.assert_not_called()
+        for name, arguments in [("read_file", '{"path":"project.txt"}'), ("list_files", "{}")]:
+            with self.subTest(name=name):
+                response = copy.deepcopy(self.response)
+                response["choices"][0]["message"]["tool_calls"][0]["function"] = {"name": name, "arguments": arguments}
+                with patch("tool_call.call_model", return_value=response) as model:
+                    with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister:
+                        with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
+                            tool_call.run_agent(self.payload, "offline-placeholder")
+                model.assert_called_once()
+                reader.assert_not_called()
+                lister.assert_not_called()
 
     def test_text_reply_does_not_execute_tool_or_ask_for_confirmation(self):
         response = {"choices": [{"message": {"role": "assistant", "content": "你好。"}, "finish_reason": "stop"}]}
@@ -141,19 +202,20 @@ class ToolCallTests(unittest.TestCase):
 
     def test_preview_shows_question_without_key_network_or_file_access(self):
         for arguments, expected in [
-            ([], "请先读取 project.txt，再读取其中提到的任务文件，最后汇总项目名称、实验编号和下一步任务。"),
+            ([], "请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，最后汇总项目名称、实验编号和下一步任务。"),
             (["请用一句话介绍自己。"], "请用一句话介绍自己。"),
         ]:
             with self.subTest(arguments=arguments):
                 with patch.object(sys, "argv", ["tool_call.py", "--preview", *arguments]):
                     with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
-                        with patch("tool_call.read_file") as reader, contextlib.redirect_stdout(io.StringIO()) as output:
+                        with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister, contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
                 payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
                 self.assertEqual(payload["messages"][-1], {"role": "user", "content": expected})
                 key.assert_not_called()
                 model.assert_not_called()
                 reader.assert_not_called()
+                lister.assert_not_called()
 
     def test_unapproved_path_is_rejected_before_confirmation(self):
         self.request["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "../chat.py"})
