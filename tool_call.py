@@ -3,6 +3,8 @@
 import argparse
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
@@ -11,10 +13,12 @@ from chat import call_model, get_api_key
 
 
 ALLOWED_FILES = ("project.txt", "next_step.txt")
-OUTPUT_FILE = "report.md"
+PYTHON_FILE = "main.py"
+WRITABLE_FILES = ("report.md", PYTHON_FILE)
 WORKSPACE = Path(__file__).parent / "workspace"
 LOG_DIR = Path(__file__).parent / "logs"
 MAX_MODEL_CALLS = 5
+RUN_TIMEOUT = 10
 
 TOOLS = [
     {
@@ -46,14 +50,27 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "将整理好的报告写入练习目录的 report.md，已有文件会被覆盖。",
+            "description": "写入练习目录的 report.md 报告或 main.py 脚本，已有文件会被覆盖。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "enum": [OUTPUT_FILE]},
-                    "content": {"type": "string", "description": "完整的 Markdown 报告内容"},
+                    "path": {"type": "string", "enum": list(WRITABLE_FILES)},
+                    "content": {"type": "string", "description": "完整的文件内容"},
                 },
                 "required": ["path", "content"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python",
+            "description": "运行练习目录的 main.py，返回退出码、标准输出和标准错误，最长运行 10 秒。",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "enum": [PYTHON_FILE]}},
+                "required": ["path"],
                 "additionalProperties": False,
             },
         },
@@ -74,15 +91,39 @@ def list_files() -> list[str]:
 
 
 def write_file(path: str, content: str) -> int:
-    """Write a nonempty report without following an existing symbolic link."""
-    if path != OUTPUT_FILE:
-        raise ValueError("只允许写入练习文件 report.md。")
+    """Write a nonempty report or script without following a symbolic link."""
+    if path not in WRITABLE_FILES:
+        raise ValueError("只允许写入练习文件 report.md 和 main.py。")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("写入内容必须是非空字符串。")
     target = WORKSPACE / path
     if target.is_symlink():
-        raise ValueError("拒绝写入符号链接，请使用普通的 report.md 文件。")
+        raise ValueError("拒绝写入符号链接，请使用普通文件。")
     return target.write_text(content, encoding="utf-8")
+
+
+def run_python(path: str) -> subprocess.CompletedProcess[str]:
+    """Run the exercise script with the current interpreter and a timeout."""
+    if path != PYTHON_FILE:
+        raise ValueError("只允许运行练习脚本 main.py。")
+    target = WORKSPACE / path
+    if target.is_symlink():
+        raise ValueError("拒绝运行符号链接，请使用普通的 main.py 文件。")
+    if not target.is_file():
+        raise FileNotFoundError("main.py 不存在或不是普通文件。")
+    child_env = os.environ.copy()
+    child_env.pop("DEEPSEEK_API_KEY", None)
+    return subprocess.run(
+        [sys.executable, "-I", "-X", "utf8", str(target.resolve())],
+        cwd=WORKSPACE,
+        env=child_env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=RUN_TIMEOUT,
+    )
 
 
 def record_event(log_file: TextIO | None, event: str, **details) -> None:
@@ -132,7 +173,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
             call_ids.add(call_id)
             function = tool_call["function"]
             name = function["name"]
-            if name not in ("read_file", "list_files", "write_file"):
+            if name not in ("read_file", "list_files", "write_file", "run_python"):
                 raise ValueError("未知工具，未执行。")
             arguments = json.loads(function["arguments"])
             if not isinstance(arguments, dict):
@@ -145,11 +186,14 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
             elif name == "list_files":
                 if arguments:
                     raise ValueError("list_files 不接受参数，请传入空对象。")
-            else:
-                if set(arguments) != {"path", "content"} or arguments["path"] != OUTPUT_FILE:
-                    raise ValueError("write_file 必须提供 path 和 content，且只能写入 report.md。")
+            elif name == "write_file":
+                if set(arguments) != {"path", "content"} or arguments["path"] not in WRITABLE_FILES:
+                    raise ValueError("write_file 必须提供 path 和 content，且只能写入 report.md 和 main.py。")
                 if not isinstance(arguments["content"], str) or not arguments["content"].strip():
                     raise ValueError("写入内容必须是非空字符串。")
+            else:
+                if set(arguments) != {"path"} or arguments["path"] != PYTHON_FILE:
+                    raise ValueError("run_python 参数必须只有 path，且只能运行 main.py。")
             prepared_calls.append((tool_call, name, arguments))
 
         messages = [
@@ -161,10 +205,13 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
                 action = f"读取 {arguments['path']}"
             elif name == "list_files":
                 action = "列出可用的练习文件"
-            else:
-                print("\n[即将写入 report.md 的完整内容]")
+            elif name == "write_file":
+                path = arguments["path"]
+                print(f"\n[即将写入 {path} 的完整内容]")
                 print(arguments["content"])
-                action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
+                action = f"覆盖现有 {path}" if (WORKSPACE / path).exists() else f"创建 {path}"
+            else:
+                action = f"运行 {PYTHON_FILE}（最长 {RUN_TIMEOUT} 秒）"
 
             if auto_read and name in ("read_file", "list_files"):
                 print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
@@ -183,19 +230,36 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
                     result = {"ok": True, "tool": name, "path": path, "content": read_file(path)}
                 elif name == "list_files":
                     result = {"ok": True, "tool": name, "files": list_files()}
-                else:
+                elif name == "write_file":
                     count = write_file(arguments["path"], arguments["content"])
                     result = {"ok": True, "tool": name, "path": arguments["path"], "characters_written": count}
+                else:
+                    completed = run_python(arguments["path"])
+                    result = {
+                        "ok": completed.returncode == 0,
+                        "tool": name,
+                        "path": arguments["path"],
+                        "exit_code": completed.returncode,
+                        "stdout": completed.stdout,
+                        "stderr": completed.stderr,
+                    }
+            except subprocess.TimeoutExpired:
+                result = {
+                    "ok": False,
+                    "tool": name,
+                    "path": arguments["path"],
+                    "error": {"type": "TimeoutExpired", "message": f"运行超过 {RUN_TIMEOUT} 秒，Python 子进程已终止。"},
+                }
             except (OSError, UnicodeError) as error:
                 result = {
                     "ok": False,
                     "tool": name,
                     "error": {
                         "type": type(error).__name__,
-                        "message": "文件工具执行失败，请检查文件是否存在、访问权限及 UTF-8 编码。",
+                        "message": "工具执行失败，请检查文件是否存在、访问权限及 UTF-8 编码。",
                     },
                 }
-                if name in ("read_file", "write_file"):
+                if name in ("read_file", "write_file", "run_python"):
                     result["path"] = arguments["path"]
             print("\n[工具执行结果]")
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -213,7 +277,7 @@ def main() -> None:
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。需要保存报告时使用 write_file，只能写入 report.md，content 必须包含完整报告；只有写入工具返回 ok 为 true 后才能声称已经保存。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
+            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。使用 write_file 保存完整文件，只能写入 report.md 报告或 main.py 脚本；只有写入工具返回 ok 为 true 后才能声称已经保存。需要验证代码时调用 run_python 运行 main.py，根据实际 exit_code、stdout 和 stderr 判断结果，不能凭推测声称运行成功。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,
