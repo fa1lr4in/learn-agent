@@ -121,74 +121,86 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
             return "max_model_calls"
 
         calls = message.get("tool_calls") or []
-        if len(calls) != 1:
-            raise ValueError("当前每轮只处理一个工具请求，请让模型分轮调用。")
-        tool_call = calls[0]
-        function = tool_call["function"]
-        name = function["name"]
-        if name not in ("read_file", "list_files", "write_file"):
-            raise ValueError("未知工具，未执行。")
-        arguments = json.loads(function["arguments"])
-        if not isinstance(arguments, dict):
-            raise ValueError("工具参数必须是 JSON 对象。")
-        if name == "read_file":
-            if set(arguments) != {"path"}:
-                raise ValueError("read_file 参数必须只有一个 path 字段。")
-            if arguments["path"] not in ALLOWED_FILES:
-                raise ValueError("模型请求的文件不在允许范围内，未执行。")
-            action = f"读取 {arguments['path']}"
-        elif name == "list_files":
-            if arguments:
-                raise ValueError("list_files 不接受参数，请传入空对象。")
-            action = "列出可用的练习文件"
-        else:
-            if set(arguments) != {"path", "content"} or arguments["path"] != OUTPUT_FILE:
-                raise ValueError("write_file 必须提供 path 和 content，且只能写入 report.md。")
-            if not isinstance(arguments["content"], str) or not arguments["content"].strip():
-                raise ValueError("写入内容必须是非空字符串。")
-            print("\n[即将写入 report.md 的完整内容]")
-            print(arguments["content"])
-            action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
-
-        if auto_read and name in ("read_file", "list_files"):
-            print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
-            approved, source = True, "auto_read"
-        else:
-            answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
-            approved, source = answer.strip().lower() == "y", "user"
-        record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source)
-        if not approved:
-            print("已停止：本轮没有执行工具，也不会继续请求模型。")
-            return "user_denied"
-
-        try:
+        if not calls:
+            raise ValueError("模型没有提供工具请求，未执行。")
+        prepared_calls = []
+        call_ids = set()
+        for tool_call in calls:
+            call_id = tool_call.get("id")
+            if not isinstance(call_id, str) or not call_id.strip() or call_id in call_ids:
+                raise ValueError("工具调用 ID 必须是非空字符串，且同一回复中不能重复。")
+            call_ids.add(call_id)
+            function = tool_call["function"]
+            name = function["name"]
+            if name not in ("read_file", "list_files", "write_file"):
+                raise ValueError("未知工具，未执行。")
+            arguments = json.loads(function["arguments"])
+            if not isinstance(arguments, dict):
+                raise ValueError("工具参数必须是 JSON 对象。")
             if name == "read_file":
-                path = arguments["path"]
-                result = {"ok": True, "tool": name, "path": path, "content": read_file(path)}
+                if set(arguments) != {"path"}:
+                    raise ValueError("read_file 参数必须只有一个 path 字段。")
+                if arguments["path"] not in ALLOWED_FILES:
+                    raise ValueError("模型请求的文件不在允许范围内，未执行。")
             elif name == "list_files":
-                result = {"ok": True, "tool": name, "files": list_files()}
+                if arguments:
+                    raise ValueError("list_files 不接受参数，请传入空对象。")
             else:
-                count = write_file(arguments["path"], arguments["content"])
-                result = {"ok": True, "tool": name, "path": arguments["path"], "characters_written": count}
-        except (OSError, UnicodeError) as error:
-            result = {
-                "ok": False,
-                "tool": name,
-                "error": {
-                    "type": type(error).__name__,
-                    "message": "文件工具执行失败，请检查文件是否存在、访问权限及 UTF-8 编码。",
-                },
-            }
-            if name in ("read_file", "write_file"):
-                result["path"] = arguments["path"]
-        print("\n[工具执行结果]")
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)
+                if set(arguments) != {"path", "content"} or arguments["path"] != OUTPUT_FILE:
+                    raise ValueError("write_file 必须提供 path 和 content，且只能写入 report.md。")
+                if not isinstance(arguments["content"], str) or not arguments["content"].strip():
+                    raise ValueError("写入内容必须是非空字符串。")
+            prepared_calls.append((tool_call, name, arguments))
+
         messages = [
             *request["messages"],
             {"role": "assistant", "content": message.get("content"), "tool_calls": calls},
-            {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)},
         ]
+        for tool_call, name, arguments in prepared_calls:
+            if name == "read_file":
+                action = f"读取 {arguments['path']}"
+            elif name == "list_files":
+                action = "列出可用的练习文件"
+            else:
+                print("\n[即将写入 report.md 的完整内容]")
+                print(arguments["content"])
+                action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
+
+            if auto_read and name in ("read_file", "list_files"):
+                print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
+                approved, source = True, "auto_read"
+            else:
+                answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
+                approved, source = answer.strip().lower() == "y", "user"
+            record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source)
+            if not approved:
+                print("已停止：未执行被拒绝的工具及本轮后续工具，也不会继续请求模型；此前已完成的操作保留。")
+                return "user_denied"
+
+            try:
+                if name == "read_file":
+                    path = arguments["path"]
+                    result = {"ok": True, "tool": name, "path": path, "content": read_file(path)}
+                elif name == "list_files":
+                    result = {"ok": True, "tool": name, "files": list_files()}
+                else:
+                    count = write_file(arguments["path"], arguments["content"])
+                    result = {"ok": True, "tool": name, "path": arguments["path"], "characters_written": count}
+            except (OSError, UnicodeError) as error:
+                result = {
+                    "ok": False,
+                    "tool": name,
+                    "error": {
+                        "type": type(error).__name__,
+                        "message": "文件工具执行失败，请检查文件是否存在、访问权限及 UTF-8 编码。",
+                    },
+                }
+                if name in ("read_file", "write_file"):
+                    result["path"] = arguments["path"]
+            print("\n[工具执行结果]")
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)})
         request = {**request, "messages": messages}
 
 
@@ -201,7 +213,7 @@ def main() -> None:
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具，每轮最多调用一次；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。如需多个文件，分轮读取。需要保存报告时使用 write_file，只能写入 report.md，content 必须包含完整报告；只有写入工具返回 ok 为 true 后才能声称已经保存。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
+            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。需要保存报告时使用 write_file，只能写入 report.md，content 必须包含完整报告；只有写入工具返回 ok 为 true 后才能声称已经保存。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,

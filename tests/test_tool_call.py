@@ -95,6 +95,38 @@ class ToolCallTests(unittest.TestCase):
         self.assertEqual(read["tool"], "read_file")
         self.assertEqual(read["content"], "项目名称：小灯")
 
+    def test_list_then_batched_reads_returns_both_results_in_one_followup(self):
+        listing = copy.deepcopy(self.response)
+        listing["choices"][0]["message"]["tool_calls"][0] = {
+            "id": "call_list", "type": "function", "function": {"name": "list_files", "arguments": "{}"},
+        }
+        second = copy.deepcopy(self.response)
+        next_call = copy.deepcopy(self.request["tool_calls"][0])
+        next_call["id"] = "call_next"
+        next_call["function"]["arguments"] = json.dumps({"path": "next_step.txt"})
+        second["choices"][0]["message"]["tool_calls"].append(next_call)
+        final = {"choices": [{"message": {"content": "汇总完成。"}, "finish_reason": "stop"}]}
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=[listing, second, final]) as model:
+            with patch("tool_call.list_files", return_value=["project.txt", "next_step.txt"]):
+                with patch("tool_call.read_file", side_effect=["项目资料", "下一步任务"]) as reader:
+                    with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
+                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(model.call_count, 3)
+        approval.assert_not_called()
+        self.assertEqual([call.args[0] for call in reader.call_args_list], ["project.txt", "next_step.txt"])
+        history = model.call_args_list[-1].args[0]["messages"]
+        self.assertEqual([entry["role"] for entry in history], ["system", "user", "assistant", "tool", "assistant", "tool", "tool"])
+        self.assertEqual(history[4]["tool_calls"], second["choices"][0]["message"]["tool_calls"])
+        self.assertEqual([entry["tool_call_id"] for entry in history[5:]], ["call_test", "call_next"])
+        self.assertEqual([json.loads(entry["content"])["content"] for entry in history[5:]], ["项目资料", "下一步任务"])
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval" and entry["step"] == 2]
+        self.assertEqual([entry["tool_call_id"] for entry in decisions], ["call_test", "call_next"])
+        self.assertTrue(all(entry["source"] == "auto_read" for entry in decisions))
+        self.assertEqual(len(self.payload["messages"]), 2)
+
     def test_writer_creates_and_overwrites_utf8_report(self):
         with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
             workspace = Path(directory)
@@ -476,7 +508,7 @@ class ToolCallTests(unittest.TestCase):
                 approval.assert_not_called()
                 self.assertIn("任务未完成", output.getvalue())
 
-    def test_multiple_calls_in_one_reply_are_rejected_before_execution(self):
+    def test_duplicate_call_ids_are_rejected_before_execution(self):
         self.request["tool_calls"].append(copy.deepcopy(self.request["tool_calls"][0]))
         with patch("tool_call.call_model", return_value=self.response), patch("tool_call.read_file") as reader:
             with patch("builtins.input") as approval:
@@ -484,6 +516,85 @@ class ToolCallTests(unittest.TestCase):
                     tool_call.run_agent(self.payload, "offline-placeholder")
         reader.assert_not_called()
         approval.assert_not_called()
+
+    def test_batched_reads_continue_after_error_and_confirm_each_call(self):
+        next_call = copy.deepcopy(self.request["tool_calls"][0])
+        next_call["id"] = "call_next"
+        next_call["function"]["arguments"] = json.dumps({"path": "next_step.txt"})
+        self.request["tool_calls"].append(next_call)
+        final = {"choices": [{"message": {"content": "已说明读取结果。"}, "finish_reason": "stop"}]}
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+            with patch("tool_call.read_file", side_effect=[FileNotFoundError(), "下一步任务"]) as reader:
+                with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                    reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(approval.call_count, 2)
+        self.assertEqual(reader.call_count, 2)
+        results = model.call_args_list[-1].args[0]["messages"][3:]
+        self.assertEqual([entry["tool_call_id"] for entry in results], ["call_test", "call_next"])
+        self.assertEqual([json.loads(entry["content"])["ok"] for entry in results], [False, True])
+        self.assertEqual(json.loads(results[-1]["content"])["content"], "下一步任务")
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertTrue(all(entry["source"] == "user" for entry in decisions))
+
+    def test_batched_writes_each_ask_and_refusal_stops_remaining_calls(self):
+        calls = []
+        for index, content in enumerate(("第一份报告", "第二份报告")):
+            calls.append({"id": f"call_write_{index}", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "report.md", "content": content}),
+            }})
+        self.request["tool_calls"] = [*calls, *self.request["tool_calls"]]
+        log_file = io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            with patch.object(tool_call, "WORKSPACE", workspace), patch("tool_call.call_model", return_value=self.response) as model:
+                with patch("tool_call.read_file") as reader, patch("builtins.input", side_effect=["y", "n"]) as approval:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+            self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), "第一份报告")
+        self.assertEqual(reason, "user_denied")
+        model.assert_called_once()
+        reader.assert_not_called()
+        self.assertEqual(approval.call_count, 2)
+        self.assertIn("创建 report.md", approval.call_args_list[0].args[0])
+        self.assertIn("覆盖现有 report.md", approval.call_args_list[1].args[0])
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertEqual([entry["approved"] for entry in decisions], [True, False])
+        self.assertEqual([entry["source"] for entry in decisions], ["user", "user"])
+        self.assertEqual([entry["tool_call_id"] for entry in entries if entry["event"] == "tool_result"], ["call_write_0"])
+
+    def test_invalid_later_call_rejects_entire_batch_before_execution(self):
+        for name, arguments in [("shell", "{}"), ("read_file", '{"path":"../chat.py"}'), ("read_file", "not json")]:
+            with self.subTest(name=name, arguments=arguments):
+                response = copy.deepcopy(self.response)
+                response["choices"][0]["message"]["tool_calls"].append({
+                    "id": "call_invalid", "type": "function", "function": {"name": name, "arguments": arguments},
+                })
+                with patch("tool_call.call_model", return_value=response), patch("tool_call.read_file") as reader:
+                    with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reader.assert_not_called()
+                approval.assert_not_called()
+
+    def test_limit_and_abnormal_finish_do_not_execute_batched_tools(self):
+        next_call = copy.deepcopy(self.request["tool_calls"][0])
+        next_call["id"] = "call_next"
+        self.request["tool_calls"].append(next_call)
+        for finish_reason, expected in [("tool_calls", "max_model_calls"), ("length", "abnormal_finish")]:
+            with self.subTest(finish_reason=finish_reason):
+                self.response["choices"][0]["finish_reason"] = finish_reason
+                with patch.object(tool_call, "MAX_MODEL_CALLS", 1), patch("tool_call.call_model", return_value=self.response) as model:
+                    with patch("tool_call.read_file") as reader, patch("builtins.input") as approval:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                self.assertEqual(reason, expected)
+                model.assert_called_once()
+                reader.assert_not_called()
+                approval.assert_not_called()
 
     def test_reader_rejects_other_files(self):
         with self.assertRaises(ValueError):
