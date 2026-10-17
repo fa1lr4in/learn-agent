@@ -381,6 +381,120 @@ class ToolCallTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             tool_call.read_file("../chat.py")
 
+    def test_log_records_order_history_and_tool_results_without_credentials(self):
+        final = {"choices": [{"message": {"content": "检查完毕。"}, "finish_reason": "stop"}], "usage": {"total_tokens": 123}}
+        for succeeds in (True, False):
+            with self.subTest(succeeds=succeeds), tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+                self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+                log_dir = Path(directory) / "logs"
+                with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
+                    with patch("tool_call.get_api_key", return_value="offline-sensitive-test-key"):
+                        with patch("tool_call.call_model", side_effect=[self.response, final]):
+                            with patch("tool_call.read_file", return_value="项目名称：小灯\n实验编号：7391", side_effect=None if succeeds else FileNotFoundError()):
+                                with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+                                    tool_call.main()
+                paths = list(log_dir.glob("*.jsonl"))
+                self.assertEqual(len(paths), 1)
+                text = paths[0].read_text(encoding="utf-8")
+                entries = [json.loads(line) for line in text.splitlines()]
+                self.assertEqual([entry["event"] for entry in entries], [
+                    "run_start", "model_request", "model_response", "tool_approval", "tool_result",
+                    "model_request", "model_response", "run_end",
+                ])
+                self.assertTrue(all(entry["time"].endswith("+00:00") for entry in entries))
+                self.assertEqual(entries[3]["tool_call_id"], "call_test")
+                self.assertTrue(entries[3]["approved"])
+                self.assertEqual(entries[4]["result"]["ok"], succeeds)
+                self.assertEqual(entries[4]["tool_call_id"], "call_test")
+                history = entries[5]["payload"]["messages"]
+                self.assertEqual(json.loads(history[-1]["content"]), entries[4]["result"])
+                self.assertEqual(entries[6]["response"]["usage"], {"total_tokens": 123})
+                self.assertEqual(entries[-1]["reason"], "stop")
+                self.assertNotIn("offline-sensitive-test-key", text)
+                self.assertNotIn("Authorization", text)
+                if succeeds:
+                    self.assertIn("项目名称：小灯", text)
+
+    def test_log_records_refusal_without_executing_tool(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+            log_dir = Path(directory) / "logs"
+            with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
+                with patch("tool_call.get_api_key", return_value="offline-placeholder"):
+                    with patch("tool_call.call_model", return_value=self.response) as model, patch("tool_call.read_file") as reader:
+                        with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
+                            tool_call.main()
+            entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+        model.assert_called_once()
+        reader.assert_not_called()
+        self.assertFalse(entries[-2]["approved"])
+        self.assertEqual(entries[-1]["reason"], "user_denied")
+        self.assertNotIn("tool_result", [entry["event"] for entry in entries])
+
+    def test_log_records_exception_type_and_cancellation(self):
+        for error, reason in [(TimeoutError("private-error-detail"), "error"), (ValueError("invalid request"), "error"), (KeyboardInterrupt(), "cancelled")]:
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+                self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+                log_dir = Path(directory) / "logs"
+                with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
+                    with patch("tool_call.get_api_key", return_value="offline-placeholder"):
+                        with patch("tool_call.call_model", side_effect=error), contextlib.redirect_stdout(io.StringIO()):
+                            with self.assertRaises(SystemExit):
+                                tool_call.main()
+                text = next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8")
+                entries = [json.loads(line) for line in text.splitlines()]
+                self.assertEqual([entry["event"] for entry in entries], ["run_start", "model_request", "run_end"])
+                self.assertEqual(entries[-1]["reason"], reason)
+                self.assertEqual(entries[-1]["error_type"], type(error).__name__)
+                self.assertNotIn("private-error-detail", text)
+
+    def test_log_records_limit_and_abnormal_finish(self):
+        for finish_reason, reason in [("tool_calls", "max_model_calls"), ("length", "abnormal_finish")]:
+            with self.subTest(finish_reason=finish_reason), tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+                self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+                log_dir = Path(directory) / "logs"
+                response = copy.deepcopy(self.response)
+                response["choices"][0]["finish_reason"] = finish_reason
+                with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(tool_call, "MAX_MODEL_CALLS", 1):
+                    with patch.object(sys, "argv", ["tool_call.py"]), patch("tool_call.get_api_key", return_value="offline-placeholder"):
+                        with patch("tool_call.call_model", return_value=response) as model:
+                            with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
+                                tool_call.main()
+                entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+                model.assert_called_once()
+                approval.assert_not_called()
+                self.assertEqual(entries[-1]["reason"], reason)
+                self.assertEqual(entries[2]["response"]["choices"][0]["finish_reason"], finish_reason)
+
+    def test_runs_create_separate_logs(self):
+        final = {"choices": [{"message": {"content": "你好。"}, "finish_reason": "stop"}]}
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+            log_dir = Path(directory) / "logs"
+            with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "你好"]):
+                with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("tool_call.call_model", return_value=final):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        tool_call.main()
+                        tool_call.main()
+            paths = list(log_dir.glob("*.jsonl"))
+            self.assertEqual(len(paths), 2)
+            for path in paths:
+                entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(entries[0]["event"], "run_start")
+                self.assertEqual(entries[-1]["reason"], "stop")
+
+    def test_preview_does_not_create_log_directory(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
+            log_dir = Path(directory) / "logs"
+            with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--preview"]):
+                with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        tool_call.main()
+            self.assertFalse(log_dir.exists())
+        key.assert_not_called()
+        model.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

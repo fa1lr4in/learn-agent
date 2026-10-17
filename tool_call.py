@@ -3,7 +3,9 @@
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 from chat import call_model, get_api_key
 
@@ -11,6 +13,7 @@ from chat import call_model, get_api_key
 ALLOWED_FILES = ("project.txt", "next_step.txt")
 OUTPUT_FILE = "report.md"
 WORKSPACE = Path(__file__).parent / "workspace"
+LOG_DIR = Path(__file__).parent / "logs"
 MAX_MODEL_CALLS = 5
 
 TOOLS = [
@@ -82,13 +85,24 @@ def write_file(path: str, content: str) -> int:
     return target.write_text(content, encoding="utf-8")
 
 
-def run_agent(payload: dict, api_key: str) -> None:
+def record_event(log_file: TextIO | None, event: str, **details) -> None:
+    """Append and flush one JSON event without receiving API credentials."""
+    if log_file is None:
+        return
+    entry = {"time": datetime.now(timezone.utc).isoformat(), "event": event, **details}
+    log_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    log_file.flush()
+
+
+def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None) -> str:
     request = {**payload, "tool_choice": "auto"}
     for step in range(1, MAX_MODEL_CALLS + 1):
         if step > 1:
             print(f"\n[第 {step} 次请求里的消息历史]")
             print(json.dumps(request["messages"], ensure_ascii=False, indent=2))
+        record_event(log_file, "model_request", step=step, payload=request)
         response = call_model(request, api_key)
+        record_event(log_file, "model_response", step=step, response=response)
         choice = response["choices"][0]
         message = choice["message"]
         print(f"\n[第 {step} 次模型回复]")
@@ -98,13 +112,13 @@ def run_agent(payload: dict, api_key: str) -> None:
         if finish_reason == "stop":
             print("\n[助手最终回答]")
             print(message.get("content") or "（本次没有返回文本回答）")
-            return
+            return "stop"
         if finish_reason != "tool_calls":
             print("本次任务未完成：模型输出被截断或请求异常结束，未执行本轮工具。")
-            return
+            return "abnormal_finish"
         if step == MAX_MODEL_CALLS:
             print(f"已达到最多 {MAX_MODEL_CALLS} 次模型请求，任务未完成；未执行本轮工具。")
-            return
+            return "max_model_calls"
 
         calls = message.get("tool_calls") or []
         if len(calls) != 1:
@@ -137,9 +151,11 @@ def run_agent(payload: dict, api_key: str) -> None:
             action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
 
         answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
-        if answer.strip().lower() != "y":
+        approved = answer.strip().lower() == "y"
+        record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved)
+        if not approved:
             print("已停止：本轮没有执行工具，也不会继续请求模型。")
-            return
+            return "user_denied"
 
         try:
             if name == "read_file":
@@ -163,6 +179,7 @@ def run_agent(payload: dict, api_key: str) -> None:
                 result["path"] = arguments["path"]
         print("\n[工具执行结果]")
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)
         messages = [
             *request["messages"],
             {"role": "assistant", "content": message.get("content"), "tool_calls": calls},
@@ -194,7 +211,19 @@ def main() -> None:
         print("\n预览结束，没有联网或读写练习文件。")
         return
     try:
-        run_agent(payload, get_api_key())
+        api_key = get_api_key()
+        LOG_DIR.mkdir(exist_ok=True)
+        log_path = LOG_DIR / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
+        with log_path.open("x", encoding="utf-8") as log_file:
+            print(f"\n[本次运行日志] {log_path}")
+            record_event(log_file, "run_start", max_model_calls=MAX_MODEL_CALLS)
+            try:
+                reason = run_agent(payload, api_key, log_file)
+            except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
+                reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
+                record_event(log_file, "run_end", reason=reason, error_type=type(error).__name__)
+                raise
+            record_event(log_file, "run_end", reason=reason)
     except (ValueError, OSError, EOFError) as error:
         raise SystemExit(f"本次实验停止：{error}") from None
     except KeyboardInterrupt:

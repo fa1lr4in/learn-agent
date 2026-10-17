@@ -18,8 +18,9 @@
 - 文件工具返回 JSON：`ok: true` 携带操作结果；文件操作失败时返回 `ok: false` 和错误类型，让模型据此调整后续操作。
 - 每次运行最多请求模型 5 次；用户拒绝、非法工具请求或模型异常结束时停止。
 - 检查工具名称、参数和允许读写的文件；拒绝确认时停止执行。
+- 每次 Agent 运行生成本地 JSONL 日志，记录模型请求与响应、工具确认与结果，以及结束原因。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件，以及先列文件再依次读取的多工具流程已由使用者真实运行成功；写入报告已通过离线测试，真实调用待验证。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、先列文件再依次读取，以及生成报告的完整五次请求流程已由使用者真实运行成功；运行日志已通过离线测试，真实调用待验证。
 
 ## 运行
 
@@ -62,6 +63,33 @@ python tool_call.py "请读取 project.txt，告诉我项目使用什么语言�
 
 默认任务的预期顺序是：列文件 → 读取项目资料 → 读取任务文件 → 写报告 → 最终回答，共 5 次模型请求、4 次工具确认。实际顺序由模型回复决定，`stop` 只表示回复正常结束，仍需检查写入工具的成功结果和磁盘文件，确认任务完成。
 
+## 运行日志
+
+运行 `tool_call.py` 时，程序会在项目的 `logs/` 目录创建一个新的 `run-年月日-时分秒-微秒.jsonl` 文件，并在终端显示路径。`--preview` 不创建日志。日志逐条写入并刷新，每一行都是一个完整的 JSON 对象，包含 UTC 时间和事件类型。
+
+| 事件 | 记录内容 |
+|---|---|
+| `run_start` | 本次任务开始及模型请求次数上限 |
+| `model_request` | 请求序号 `step` 和发送给模型的请求体 `payload` |
+| `model_response` | 请求序号和服务返回的完整 JSON，包含停止原因及服务提供的 token 用量 |
+| `tool_approval` | 工具名、调用 ID 和是否获准执行 |
+| `tool_result` | 工具名、调用 ID 和实际执行结果 |
+| `run_end` | 结束原因；发生异常时包含异常类型 |
+
+`run_end.reason` 的取值包括 `stop`（模型正常结束）、`user_denied`（用户拒绝）、`max_model_calls`（达到请求上限）、`abnormal_finish`（模型异常结束）、`error`（请求或程序错误）、`cancelled`（用户中断）。异常记录只保存类型，不保存原始异常字符串。
+
+日志记录问题、模型回复和工具读写内容，不记录 API Key 或 HTTP 请求头。`logs/` 已在 `.gitignore` 中排除，普通 Git 提交不会包含运行日志。它们用于回看执行过程，不会自动加载为后续运行的会话历史。
+
+在 PowerShell 中查看最近一次运行的事件顺序：
+
+```powershell
+$runLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+$events = Get-Content -LiteralPath $runLog.FullName -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json }
+$events | Select-Object event, step, tool, reason | Format-Table -AutoSize
+```
+
 ## 验证
 
 ```powershell
@@ -69,6 +97,8 @@ python -m unittest discover -s tests -v
 ```
 
 测试模拟服务响应，不调用真实 API，检查多轮消息历史、清空历史、退出与预览行为，以及多工具分发、文件列表过滤、连续工具结果对应关系、读取错误反馈、失败后改读其他文件、调用次数上限、直接回答、拒绝执行、异常结束和非法请求。写入测试使用临时目录，覆盖完整五次请求流程、中文报告保存、覆盖确认、拒绝时保留原文件、非法写入和写入错误反馈。
+
+日志测试也使用临时目录，检查 JSONL 事件顺序、工具结果与下一轮消息的一致性、密钥不进入日志、不同运行分别保存，以及拒绝、错误、中断、达到上限和预览等分支。
 
 ## 许可证
 
