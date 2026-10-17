@@ -215,6 +215,47 @@ class RunPythonTests(unittest.TestCase):
         decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
         self.assertEqual([entry["source"] for entry in decisions], ["auto_read"] * 3 + ["user"] * 2)
 
+    def test_truncated_summary_preserves_successful_execution_results(self):
+        code = "def sum_to(n):\n    return sum(range(1, n + 1))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n"
+        (self.workspace / "main.py").write_text(code, encoding="utf-8")
+        fixture = Path(tool_call.__file__).parent / "workspace" / "test_main.py"
+        test_content = fixture.read_bytes()
+        (self.workspace / "test_main.py").write_bytes(test_content)
+        running = copy.deepcopy(self.response)
+        running["choices"][0]["message"]["tool_calls"] = [
+            {"id": call_id, "type": "function", "function": {"name": "run_python", "arguments": json.dumps({"path": path})}}
+            for call_id, path in [("call_tests", "test_main.py"), ("call_main", "main.py")]
+        ]
+        truncated = {"choices": [{"finish_reason": "length", "message": {
+            "content": "四个测试通过，主程序输出 5050。补充说明尚未完成",
+            "tool_calls": [{"id": "call_incomplete_write", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "main.py", "content": "raise RuntimeError()\n"}),
+            }}],
+        }}]}
+        log_dir = self.workspace / "logs"
+        with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "验证现有脚本"]):
+            with patch("tool_call.get_api_key", return_value="offline-placeholder"):
+                with patch("tool_call.call_model", side_effect=[running, truncated]) as model, patch("tool_call.write_file") as writer:
+                    with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
+                        tool_call.main()
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual([call.args[0]["max_tokens"] for call in model.call_args_list], [2048, 2048])
+        self.assertEqual(approval.call_count, 2)
+        writer.assert_not_called()
+        entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+        results = [entry["result"] for entry in entries if entry["event"] == "tool_result"]
+        self.assertEqual([result["path"] for result in results], ["test_main.py", "main.py"])
+        self.assertTrue(all(result["ok"] and result["exit_code"] == 0 for result in results))
+        self.assertIn("Ran 4 tests", results[0]["stderr"])
+        self.assertIn("OK", results[0]["stderr"])
+        self.assertEqual(results[1]["stdout"].strip(), "5050")
+        self.assertEqual(entries[-1]["event"], "run_end")
+        self.assertEqual(entries[-1]["reason"], "abnormal_finish")
+        self.assertIn("此前已完成的操作和结果保留", output.getvalue())
+        self.assertNotIn("[助手最终回答]", output.getvalue())
+        self.assertEqual((self.workspace / "main.py").read_text(encoding="utf-8"), code)
+        self.assertEqual((self.workspace / "test_main.py").read_bytes(), test_content)
+
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")
         tool_call.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')
