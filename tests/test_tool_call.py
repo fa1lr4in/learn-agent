@@ -138,7 +138,7 @@ class ToolCallTests(unittest.TestCase):
                 self.assertEqual([path.name for path in workspace.iterdir()], ["report.md"])
 
     def test_writer_rejects_other_paths_and_empty_content(self):
-        for path, content in [("../chat.py", "报告"), ("project.txt", "报告"), ("report.md", "  "), ("report.md", 123)]:
+        for path, content in [("../chat.py", "报告"), ("project.txt", "报告"), ("test_main.py", "报告"), ("report.md", "  "), ("report.md", 123)]:
             with self.subTest(path=path, content=content):
                 with patch.object(Path, "write_text") as writer, self.assertRaises(ValueError):
                     tool_call.write_file(path, content)
@@ -324,6 +324,7 @@ class ToolCallTests(unittest.TestCase):
         invalid = [
             {"path": "../chat.py", "content": "报告"},
             {"path": "project.txt", "content": "报告"},
+            {"path": "test_main.py", "content": "报告"},
             {"path": "report.md"},
             {"path": "report.md", "content": "报告", "extra": True},
             {"path": "report.md", "content": "\n "},

@@ -15,6 +15,7 @@ from chat import call_model, get_api_key
 ALLOWED_FILES = ("project.txt", "next_step.txt")
 PYTHON_FILE = "main.py"
 WRITABLE_FILES = ("report.md", PYTHON_FILE)
+RUNNABLE_FILES = (PYTHON_FILE, "test_main.py")
 WORKSPACE = Path(__file__).parent / "workspace"
 LOG_DIR = Path(__file__).parent / "logs"
 MAX_MODEL_CALLS = 5
@@ -66,10 +67,10 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_python",
-            "description": "运行练习目录的 main.py，返回退出码、标准输出和标准错误，最长运行 10 秒。",
+            "description": "运行练习目录的 main.py 或验收脚本 test_main.py，返回退出码、标准输出和标准错误，最长运行 10 秒。",
             "parameters": {
                 "type": "object",
-                "properties": {"path": {"type": "string", "enum": [PYTHON_FILE]}},
+                "properties": {"path": {"type": "string", "enum": list(RUNNABLE_FILES)}},
                 "required": ["path"],
                 "additionalProperties": False,
             },
@@ -103,14 +104,14 @@ def write_file(path: str, content: str) -> int:
 
 
 def run_python(path: str) -> subprocess.CompletedProcess[str]:
-    """Run the exercise script with the current interpreter and a timeout."""
-    if path != PYTHON_FILE:
-        raise ValueError("只允许运行练习脚本 main.py。")
+    """Run an allowed exercise script with the current interpreter and a timeout."""
+    if path not in RUNNABLE_FILES:
+        raise ValueError("只允许运行练习脚本 main.py 和 test_main.py。")
     target = WORKSPACE / path
     if target.is_symlink():
-        raise ValueError("拒绝运行符号链接，请使用普通的 main.py 文件。")
+        raise ValueError("拒绝运行符号链接，请使用普通脚本文件。")
     if not target.is_file():
-        raise FileNotFoundError("main.py 不存在或不是普通文件。")
+        raise FileNotFoundError(f"{path} 不存在或不是普通文件。")
     child_env = os.environ.copy()
     child_env.pop("DEEPSEEK_API_KEY", None)
     return subprocess.run(
@@ -192,8 +193,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
                 if not isinstance(arguments["content"], str) or not arguments["content"].strip():
                     raise ValueError("写入内容必须是非空字符串。")
             else:
-                if set(arguments) != {"path"} or arguments["path"] != PYTHON_FILE:
-                    raise ValueError("run_python 参数必须只有 path，且只能运行 main.py。")
+                if set(arguments) != {"path"} or arguments["path"] not in RUNNABLE_FILES:
+                    raise ValueError("run_python 参数必须只有 path，且只能运行 main.py 和 test_main.py。")
             prepared_calls.append((tool_call, name, arguments))
 
         messages = [
@@ -211,7 +212,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
                 print(arguments["content"])
                 action = f"覆盖现有 {path}" if (WORKSPACE / path).exists() else f"创建 {path}"
             else:
-                action = f"运行 {PYTHON_FILE}（最长 {RUN_TIMEOUT} 秒）"
+                action = f"运行 {arguments['path']}（最长 {RUN_TIMEOUT} 秒）"
 
             if auto_read and name in ("read_file", "list_files"):
                 print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
@@ -277,7 +278,7 @@ def main() -> None:
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。使用 write_file 保存完整文件，只能写入 report.md 报告或 main.py 脚本；只有写入工具返回 ok 为 true 后才能声称已经保存。需要验证代码时调用 run_python 运行 main.py，根据实际 exit_code、stdout 和 stderr 判断结果，不能凭推测声称运行成功。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容。脚本报错时先根据 stderr 修改代码，再重新运行验证；代码和参数未变化时不要反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
+            {"role": "system", "content": "需要文件内容时调用工具；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。同一轮可以请求多个互不依赖的工具，程序按顺序执行；依赖工具结果的后续操作，请收到结果后再提出。使用 write_file 保存完整文件，只能写入 report.md 报告或 main.py 脚本；只有写入工具返回 ok 为 true 后才能声称已经保存。需要验证代码时调用 run_python，根据实际 exit_code、stdout 和 stderr 判断结果，不能凭推测声称运行成功。任务有验收测试时运行 test_main.py；main.py 正常退出不代表计算正确，应根据验收测试结果判断任务是否完成。测试失败时修改 main.py 后重新测试，保留验收条件。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容。脚本报错时先根据 stderr 修改代码，再重新运行验证；代码和参数未变化时不要反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,

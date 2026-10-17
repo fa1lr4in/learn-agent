@@ -110,6 +110,58 @@ class RunPythonTests(unittest.TestCase):
         recorded_results = [entry["result"] for entry in entries if entry["event"] == "tool_result"]
         self.assertEqual(recorded_results, [json.loads(message["content"]) for message in results])
 
+    def test_agent_repairs_logic_error_using_fixed_acceptance_tests(self):
+        fixture = Path(tool_call.__file__).parent / "workspace" / "test_main.py"
+        test_content = fixture.read_bytes()
+        (self.workspace / "test_main.py").write_bytes(test_content)
+        broken_code = "def sum_to(n):\n    return sum(range(1, n))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n"
+        fixed_code = broken_code.replace("range(1, n)", "range(1, n + 1)")
+        tool_call.write_file("main.py", broken_code)
+        ordinary_run = tool_call.run_python("main.py")
+        self.assertEqual(ordinary_run.returncode, 0)
+        self.assertEqual(ordinary_run.stdout.strip(), "4950")
+        self.assertEqual(ordinary_run.stderr, "")
+        responses = []
+        for call_id, name, arguments in [
+            ("call_write_broken", "write_file", {"path": "main.py", "content": broken_code}),
+            ("call_test_broken", "run_python", {"path": "test_main.py"}),
+            ("call_write_fixed", "write_file", {"path": "main.py", "content": fixed_code}),
+            ("call_test_fixed", "run_python", {"path": "test_main.py"}),
+        ]:
+            response = copy.deepcopy(self.response)
+            response["choices"][0]["message"]["tool_calls"][0] = {
+                "id": call_id, "type": "function", "function": {
+                    "name": name, "arguments": json.dumps(arguments),
+                },
+            }
+            responses.append(response)
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+            with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(model.call_count, 5)
+        self.assertEqual(approval.call_count, 4)
+        self.assertIn("运行 test_main.py", approval.call_args_list[1].args[0])
+        failure = json.loads(model.call_args_list[2].args[0]["messages"][-1]["content"])
+        self.assertEqual(failure["path"], "test_main.py")
+        self.assertFalse(failure["ok"])
+        self.assertNotEqual(failure["exit_code"], 0)
+        self.assertIn("4950 != 5050", failure["stderr"])
+        self.assertIn("FAILED", failure["stderr"])
+        success = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertTrue(success["ok"])
+        self.assertEqual(success["exit_code"], 0)
+        self.assertIn("Ran 4 tests", success["stderr"])
+        self.assertIn("OK", success["stderr"])
+        self.assertEqual((self.workspace / "main.py").read_text(encoding="utf-8"), fixed_code)
+        self.assertEqual((self.workspace / "test_main.py").read_bytes(), test_content)
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertEqual([entry["source"] for entry in decisions], ["user"] * 4)
+        executions = [entry["result"] for entry in entries if entry["event"] == "tool_result" and entry["tool"] == "run_python"]
+        self.assertEqual(executions, [failure, success])
+
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")
         tool_call.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')
@@ -195,16 +247,19 @@ class RunPythonTests(unittest.TestCase):
         process.assert_not_called()
 
     def test_auto_read_does_not_bypass_execution_confirmation(self):
-        log_file = io.StringIO()
-        with patch("tool_call.call_model", return_value=self.response) as model, patch("tool_call.run_python") as runner:
-            with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
-        self.assertEqual(reason, "user_denied")
-        model.assert_called_once()
-        runner.assert_not_called()
-        decision = json.loads(log_file.getvalue().splitlines()[-1])
-        self.assertEqual(decision["source"], "user")
-        self.assertFalse(decision["approved"])
+        for path in ("main.py", "test_main.py"):
+            with self.subTest(path=path):
+                self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": path})
+                log_file = io.StringIO()
+                with patch("tool_call.call_model", return_value=self.response) as model, patch("tool_call.run_python") as runner:
+                    with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
+                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                self.assertEqual(reason, "user_denied")
+                model.assert_called_once()
+                runner.assert_not_called()
+                decision = json.loads(log_file.getvalue().splitlines()[-1])
+                self.assertEqual(decision["source"], "user")
+                self.assertFalse(decision["approved"])
 
     def test_preview_shows_runner_without_executing_or_creating_logs(self):
         log_dir = self.workspace / "logs"
@@ -214,6 +269,8 @@ class RunPythonTests(unittest.TestCase):
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
         self.assertIn("run_python", [item["function"]["name"] for item in payload["tools"]])
+        runner_schema = next(item["function"] for item in payload["tools"] if item["function"]["name"] == "run_python")
+        self.assertEqual(runner_schema["parameters"]["properties"]["path"]["enum"], ["main.py", "test_main.py"])
         self.assertFalse(log_dir.exists())
         self.assertFalse((self.workspace / "main.py").exists())
         key.assert_not_called()
