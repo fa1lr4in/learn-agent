@@ -68,10 +68,24 @@ class ToolCallTests(unittest.TestCase):
             workspace = Path(directory)
             self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
             (workspace / "project.txt").write_text("项目资料", encoding="utf-8")
+            (workspace / "report.md").write_text("报告", encoding="utf-8")
+            (workspace / "main.py").write_text("print(5050)\n", encoding="utf-8")
+            (workspace / "test_main.py").write_text("验收脚本", encoding="utf-8")
             (workspace / "private.txt").write_text("不允许读取", encoding="utf-8")
             (workspace / "next_step.txt").mkdir()
             with patch.object(tool_call, "WORKSPACE", workspace):
-                self.assertEqual(tool_call.list_files(), ["project.txt"])
+                self.assertEqual(tool_call.list_files(), ["project.txt", "report.md", "main.py", "test_main.py"])
+
+    def test_read_file_can_inspect_generated_report_and_python_sources(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            for name in ("report.md", "main.py", "test_main.py"):
+                with self.subTest(path=name):
+                    content = f"{name} 的完整练习内容\n"
+                    (workspace / name).write_text(content, encoding="utf-8")
+                    with patch.object(tool_call, "WORKSPACE", workspace):
+                        self.assertEqual(tool_call.read_file(name), content)
 
     def test_list_then_read_dispatches_to_correct_functions(self):
         listing = copy.deepcopy(self.response)
@@ -91,7 +105,7 @@ class ToolCallTests(unittest.TestCase):
         history = model.call_args_list[-1].args[0]["messages"]
         self.assertEqual([history[index]["tool_call_id"] for index in (3, 5)], ["call_list", "call_test"])
         listed, read = [json.loads(history[index]["content"]) for index in (3, 5)]
-        self.assertEqual(listed, {"ok": True, "tool": "list_files", "files": ["project.txt"]})
+        self.assertEqual(listed, {"ok": True, "tool": "list_files", "scope": "allowlisted_workspace_files", "files": ["project.txt"]})
         self.assertEqual(read["tool"], "read_file")
         self.assertEqual(read["content"], "项目名称：小灯")
 
@@ -167,7 +181,7 @@ class ToolCallTests(unittest.TestCase):
             }
             responses.append(response)
         responses.append({"choices": [{"message": {"content": "报告已保存。"}, "finish_reason": "stop"}]})
-        sources = {name: tool_call.read_file(name) for name in tool_call.ALLOWED_FILES}
+        sources = {name: tool_call.read_file(name) for name in ("project.txt", "next_step.txt")}
         with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
             workspace = Path(directory)
             self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())

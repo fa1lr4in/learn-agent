@@ -169,6 +169,52 @@ class RunPythonTests(unittest.TestCase):
         executions = [entry["result"] for entry in entries if entry["event"] == "tool_result" and entry["tool"] == "run_python"]
         self.assertEqual(executions, [failure, success, final_run])
 
+    def test_existing_scripts_are_listed_read_and_verified_in_a_fresh_run(self):
+        code = "def sum_to(n):\n    return sum(range(1, n + 1))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n"
+        (self.workspace / "main.py").write_text(code, encoding="utf-8")
+        fixture = Path(tool_call.__file__).parent / "workspace" / "test_main.py"
+        test_content = fixture.read_text(encoding="utf-8")
+        (self.workspace / "test_main.py").write_text(test_content, encoding="utf-8")
+        responses = []
+        for calls in [
+            [("call_list", "list_files", {})],
+            [("call_read_main", "read_file", {"path": "main.py"}), ("call_read_tests", "read_file", {"path": "test_main.py"})],
+            [("call_run_tests", "run_python", {"path": "test_main.py"}), ("call_run_main", "run_python", {"path": "main.py"})],
+        ]:
+            response = copy.deepcopy(self.response)
+            response["choices"][0]["message"]["tool_calls"] = [
+                {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
+                for call_id, name, arguments in calls
+            ]
+            responses.append(response)
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+            with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(model.call_count, 4)
+        self.assertEqual(approval.call_count, 2)
+        listed = json.loads(model.call_args_list[1].args[0]["messages"][-1]["content"])
+        self.assertEqual(listed["files"], ["main.py", "test_main.py"])
+        self.assertEqual(listed["scope"], "allowlisted_workspace_files")
+        reads = [json.loads(message["content"]) for message in model.call_args_list[2].args[0]["messages"][-2:]]
+        self.assertEqual([result["content"] for result in reads], [code, test_content])
+        self.assertTrue(all(result["ok"] for result in reads))
+        tested, ran = [json.loads(message["content"]) for message in model.call_args_list[-1].args[0]["messages"][-2:]]
+        self.assertTrue(tested["ok"])
+        self.assertEqual(tested["exit_code"], 0)
+        self.assertIn("Ran 4 tests", tested["stderr"])
+        self.assertIn("OK", tested["stderr"])
+        self.assertTrue(ran["ok"])
+        self.assertEqual(ran["exit_code"], 0)
+        self.assertEqual(ran["stdout"].strip(), "5050")
+        self.assertEqual(ran["stderr"], "")
+        self.assertEqual((self.workspace / "main.py").read_text(encoding="utf-8"), code)
+        self.assertEqual((self.workspace / "test_main.py").read_text(encoding="utf-8"), test_content)
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        decisions = [entry for entry in entries if entry["event"] == "tool_approval"]
+        self.assertEqual([entry["source"] for entry in decisions], ["auto_read"] * 3 + ["user"] * 2)
+
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")
         tool_call.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')
