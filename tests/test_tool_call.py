@@ -95,6 +95,126 @@ class ToolCallTests(unittest.TestCase):
         self.assertEqual(read["tool"], "read_file")
         self.assertEqual(read["content"], "项目名称：小灯")
 
+    def test_writer_creates_and_overwrites_utf8_report(self):
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            with patch.object(tool_call, "WORKSPACE", workspace):
+                for content in ("# 项目报告\n项目名称：小灯\n实验编号：7391", "# 新报告\n更新后的内容"):
+                    self.assertEqual(tool_call.write_file("report.md", content), len(content))
+                    self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content)
+                self.assertEqual([path.name for path in workspace.iterdir()], ["report.md"])
+
+    def test_writer_rejects_other_paths_and_empty_content(self):
+        for path, content in [("../chat.py", "报告"), ("project.txt", "报告"), ("report.md", "  "), ("report.md", 123)]:
+            with self.subTest(path=path, content=content):
+                with patch.object(Path, "write_text") as writer, self.assertRaises(ValueError):
+                    tool_call.write_file(path, content)
+                writer.assert_not_called()
+
+    def test_writer_rejects_symbolic_link(self):
+        with patch.object(Path, "is_symlink", return_value=True):
+            with patch.object(Path, "write_text") as writer, self.assertRaises(ValueError):
+                tool_call.write_file("report.md", "报告")
+        writer.assert_not_called()
+
+    def test_full_sequence_lists_reads_and_writes_within_limit(self):
+        content = "# 项目报告\n项目名称：小灯\n实验编号：7391\n下一步任务：把单次工具调用扩展为 Agent 循环。"
+        steps = [
+            ("list_files", {}),
+            ("read_file", {"path": "project.txt"}),
+            ("read_file", {"path": "next_step.txt"}),
+            ("write_file", {"path": "report.md", "content": content}),
+        ]
+        responses = []
+        for index, (name, arguments) in enumerate(steps):
+            response = copy.deepcopy(self.response)
+            response["choices"][0]["message"]["tool_calls"][0] = {
+                "id": f"call_{index}", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)},
+            }
+            responses.append(response)
+        responses.append({"choices": [{"message": {"content": "报告已保存。"}, "finish_reason": "stop"}]})
+        sources = {name: tool_call.read_file(name) for name in tool_call.ALLOWED_FILES}
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            for name, source in sources.items():
+                (workspace / name).write_text(source, encoding="utf-8")
+            with patch.object(tool_call, "WORKSPACE", workspace):
+                with patch("tool_call.call_model", side_effect=responses) as model:
+                    with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
+                        tool_call.run_agent(self.payload, "offline-placeholder")
+            self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content)
+            for name, source in sources.items():
+                self.assertEqual((workspace / name).read_text(encoding="utf-8"), source)
+        self.assertEqual(model.call_count, 5)
+        self.assertEqual(approval.call_count, 4)
+        self.assertIn("创建 report.md", approval.call_args.args[0])
+        history = model.call_args_list[-1].args[0]["messages"]
+        self.assertEqual([history[index]["tool_call_id"] for index in (3, 5, 7, 9)], [f"call_{index}" for index in range(4)])
+        result = json.loads(history[-1]["content"])
+        self.assertEqual(result, {"ok": True, "tool": "write_file", "path": "report.md", "characters_written": len(content)})
+        self.assertIn("[助手最终回答]\n报告已保存。", output.getvalue())
+        self.assertNotIn("任务未完成", output.getvalue())
+
+    def test_overwrite_requires_approval_and_shows_content(self):
+        content = "# 新报告\n项目名称：小灯"
+        self.request["tool_calls"][0]["function"] = {
+            "name": "write_file", "arguments": json.dumps({"path": "report.md", "content": content}),
+        }
+        final = {"choices": [{"message": {"content": "已保存。"}, "finish_reason": "stop"}]}
+        with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
+            workspace = Path(directory)
+            self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+            for answer in ("n", "y"):
+                with self.subTest(answer=answer):
+                    (workspace / "report.md").write_text("旧报告", encoding="utf-8")
+                    with patch.object(tool_call, "WORKSPACE", workspace):
+                        with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+                            with patch("builtins.input", return_value=answer) as approval, contextlib.redirect_stdout(io.StringIO()) as output:
+                                tool_call.run_agent(self.payload, "offline-placeholder")
+                    self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content if answer == "y" else "旧报告")
+                    self.assertEqual(model.call_count, 2 if answer == "y" else 1)
+                    approval.assert_called_once()
+                    self.assertIn("覆盖现有 report.md", approval.call_args.args[0])
+                    self.assertIn(content, output.getvalue())
+
+    def test_write_arguments_are_validated_before_confirmation(self):
+        invalid = [
+            {"path": "../chat.py", "content": "报告"},
+            {"path": "project.txt", "content": "报告"},
+            {"path": "report.md"},
+            {"path": "report.md", "content": "报告", "extra": True},
+            {"path": "report.md", "content": "\n "},
+            {"path": "report.md", "content": 123},
+        ]
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                self.request["tool_calls"][0]["function"] = {"name": "write_file", "arguments": json.dumps(arguments)}
+                with patch("tool_call.call_model", return_value=self.response), patch("tool_call.write_file") as writer:
+                    with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+                        tool_call.run_agent(self.payload, "offline-placeholder")
+                writer.assert_not_called()
+                approval.assert_not_called()
+
+    def test_write_failure_is_returned_to_model(self):
+        self.request["tool_calls"][0]["function"] = {
+            "name": "write_file", "arguments": json.dumps({"path": "report.md", "content": "报告"}),
+        }
+        final = {"choices": [{"message": {"content": "保存失败。"}, "finish_reason": "stop"}]}
+        with patch("tool_call.call_model", side_effect=[self.response, final]) as model:
+            with patch("tool_call.write_file", side_effect=PermissionError("private-local-path")):
+                with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+                    tool_call.run_agent(self.payload, "offline-placeholder")
+        result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertEqual(result["path"], "report.md")
+        self.assertEqual(result["tool"], "write_file")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["type"], "PermissionError")
+        self.assertNotIn("characters_written", result)
+        self.assertNotIn("private-local-path", json.dumps(result))
+
     def test_list_files_rejects_arguments_before_confirmation(self):
         self.request["tool_calls"][0]["function"] = {"name": "list_files", "arguments": '{"path":".."}'}
         with patch("tool_call.call_model", return_value=self.response), patch("tool_call.list_files") as lister:
@@ -202,13 +322,13 @@ class ToolCallTests(unittest.TestCase):
 
     def test_preview_shows_question_without_key_network_or_file_access(self):
         for arguments, expected in [
-            ([], "请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，最后汇总项目名称、实验编号和下一步任务。"),
+            ([], "请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，汇总项目名称、实验编号和下一步任务，用 write_file 将 Markdown 报告保存到 report.md，最后说明保存结果。"),
             (["请用一句话介绍自己。"], "请用一句话介绍自己。"),
         ]:
             with self.subTest(arguments=arguments):
                 with patch.object(sys, "argv", ["tool_call.py", "--preview", *arguments]):
                     with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
-                        with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister, contextlib.redirect_stdout(io.StringIO()) as output:
+                        with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister, patch("tool_call.write_file") as writer, contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
                 payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
                 self.assertEqual(payload["messages"][-1], {"role": "user", "content": expected})
@@ -216,6 +336,7 @@ class ToolCallTests(unittest.TestCase):
                 model.assert_not_called()
                 reader.assert_not_called()
                 lister.assert_not_called()
+                writer.assert_not_called()
 
     def test_unapproved_path_is_rejected_before_confirmation(self):
         self.request["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "../chat.py"})

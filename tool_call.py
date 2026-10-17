@@ -1,4 +1,4 @@
-"""Run a bounded agent loop with approved file-reading tool calls."""
+"""Run a bounded agent loop with approved file tool calls."""
 
 import argparse
 import json
@@ -9,6 +9,7 @@ from chat import call_model, get_api_key
 
 
 ALLOWED_FILES = ("project.txt", "next_step.txt")
+OUTPUT_FILE = "report.md"
 WORKSPACE = Path(__file__).parent / "workspace"
 MAX_MODEL_CALLS = 5
 
@@ -38,6 +39,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "将整理好的报告写入练习目录的 report.md，已有文件会被覆盖。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "enum": [OUTPUT_FILE]},
+                    "content": {"type": "string", "description": "完整的 Markdown 报告内容"},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -51,6 +68,18 @@ def read_file(path: str) -> str:
 def list_files() -> list[str]:
     """List existing files from the same allowlist used by read_file."""
     return [name for name in ALLOWED_FILES if (WORKSPACE / name).is_file()]
+
+
+def write_file(path: str, content: str) -> int:
+    """Write a nonempty report without following an existing symbolic link."""
+    if path != OUTPUT_FILE:
+        raise ValueError("只允许写入练习文件 report.md。")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("写入内容必须是非空字符串。")
+    target = WORKSPACE / path
+    if target.is_symlink():
+        raise ValueError("拒绝写入符号链接，请使用普通的 report.md 文件。")
+    return target.write_text(content, encoding="utf-8")
 
 
 def run_agent(payload: dict, api_key: str) -> None:
@@ -83,7 +112,7 @@ def run_agent(payload: dict, api_key: str) -> None:
         tool_call = calls[0]
         function = tool_call["function"]
         name = function["name"]
-        if name not in ("read_file", "list_files"):
+        if name not in ("read_file", "list_files", "write_file"):
             raise ValueError("未知工具，未执行。")
         arguments = json.loads(function["arguments"])
         if not isinstance(arguments, dict):
@@ -94,10 +123,18 @@ def run_agent(payload: dict, api_key: str) -> None:
             if arguments["path"] not in ALLOWED_FILES:
                 raise ValueError("模型请求的文件不在允许范围内，未执行。")
             action = f"读取 {arguments['path']}"
-        else:
+        elif name == "list_files":
             if arguments:
                 raise ValueError("list_files 不接受参数，请传入空对象。")
             action = "列出可用的练习文件"
+        else:
+            if set(arguments) != {"path", "content"} or arguments["path"] != OUTPUT_FILE:
+                raise ValueError("write_file 必须提供 path 和 content，且只能写入 report.md。")
+            if not isinstance(arguments["content"], str) or not arguments["content"].strip():
+                raise ValueError("写入内容必须是非空字符串。")
+            print("\n[即将写入 report.md 的完整内容]")
+            print(arguments["content"])
+            action = "覆盖现有 report.md" if (WORKSPACE / OUTPUT_FILE).exists() else "创建 report.md"
 
         answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")
         if answer.strip().lower() != "y":
@@ -108,8 +145,11 @@ def run_agent(payload: dict, api_key: str) -> None:
             if name == "read_file":
                 path = arguments["path"]
                 result = {"ok": True, "tool": name, "path": path, "content": read_file(path)}
-            else:
+            elif name == "list_files":
                 result = {"ok": True, "tool": name, "files": list_files()}
+            else:
+                count = write_file(arguments["path"], arguments["content"])
+                result = {"ok": True, "tool": name, "path": arguments["path"], "characters_written": count}
         except (OSError, UnicodeError) as error:
             result = {
                 "ok": False,
@@ -119,7 +159,7 @@ def run_agent(payload: dict, api_key: str) -> None:
                     "message": "文件工具执行失败，请检查文件是否存在、访问权限及 UTF-8 编码。",
                 },
             }
-            if name == "read_file":
+            if name in ("read_file", "write_file"):
                 result["path"] = arguments["path"]
         print("\n[工具执行结果]")
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -133,13 +173,13 @@ def run_agent(payload: dict, api_key: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="运行经过逐次确认的 Agent 工具循环")
-    parser.add_argument("prompt", nargs="?", default="请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，最后汇总项目名称、实验编号和下一步任务。")
-    parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读取练习文件")
+    parser.add_argument("prompt", nargs="?", default="请先列出可用的练习文件，再读取项目资料和其中提到的任务文件，汇总项目名称、实验编号和下一步任务，用 write_file 将 Markdown 报告保存到 report.md，最后说明保存结果。")
+    parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读写练习文件")
     args = parser.parse_args()
     payload = {
         "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
         "messages": [
-            {"role": "system", "content": "需要文件内容时调用工具，每轮最多调用一次；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。如需多个文件，分轮读取。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
+            {"role": "system", "content": "需要文件内容时调用工具，每轮最多调用一次；不确定哪些文件可用时使用 list_files，需要正文时使用 read_file。如需多个文件，分轮读取。需要保存报告时使用 write_file，只能写入 report.md，content 必须包含完整报告；只有写入工具返回 ok 为 true 后才能声称已经保存。工具返回 JSON，ok 为 false 表示执行失败，请根据错误调整操作，不要把错误当作文件内容或反复重试同一失败操作。收到足够的真实结果后用中文回答；无法完成的部分如实说明。"},
             {"role": "user", "content": args.prompt},
         ],
         "tools": TOOLS,
@@ -151,7 +191,7 @@ def main() -> None:
     print("[第一次请求：消息与工具说明]")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if args.preview:
-        print("\n预览结束，没有联网或读取练习文件。")
+        print("\n预览结束，没有联网或读写练习文件。")
         return
     try:
         run_agent(payload, get_api_key())
