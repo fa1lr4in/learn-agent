@@ -1,6 +1,7 @@
 """Built-in tools and the registry used by the agent loop."""
 
 import difflib
+import json
 import os
 import re
 import subprocess
@@ -9,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import commands
 from .permissions import resolve_python_path, resolve_workspace_path, resolve_write_path
 
 
@@ -271,6 +273,14 @@ def _prepare_run(arguments: dict) -> PreparedTool:
     return PreparedTool(f"运行 {path}（最长 {RUN_TIMEOUT} 秒）", execute)
 
 
+def _prepare_command(arguments: dict) -> PreparedTool:
+    path = arguments.get("path", ".")
+    argv = commands.command_args(arguments["command"], resolve_workspace_path(path))
+    timeout = arguments.get("timeout", commands.COMMAND_TIMEOUT)
+    action = f"在 {path} 执行参数列表 {json.dumps(argv, ensure_ascii=False)}（最长 {timeout} 秒）"
+    return PreparedTool(action, lambda: commands.run_command(argv, path, timeout))
+
+
 TOOL_ERRORS = (EditConflict, subprocess.TimeoutExpired, OSError, UnicodeError)
 
 
@@ -415,4 +425,27 @@ register_tool(Tool(
     validate=lambda args: resolve_python_path(args["path"]),
     prepare=_prepare_run,
     read_only=False,
+))
+
+
+register_tool(Tool(
+    schema={
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "经用户确认后运行前台程序及参数列表，不自动解释 shell 管道或重定向。command 是字符串数组，首项为程序名，其余为独立参数；python 使用当前解释器，例如 [\"python\", \"-m\", \"unittest\", \"-v\", \"test_stats.py\"]。path 是相对当前 workspace 的工作目录，默认 .；timeout 默认 30 秒，范围 1 至 120。分别返回退出码、stdout、stderr 和截断标记，非零退出、超时或输出超限时 ok 为 false；每个输出流上限 16 KiB，超限停止命令。运行不使用操作系统沙箱，不启动后台服务，不直接执行 .bat/.cmd。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "程序及参数，每个元素是独立参数"},
+                    "path": {"type": "string", "description": "相对 workspace 的工作目录，默认 ."},
+                    "timeout": {"type": "integer", "minimum": 1, "maximum": 120, "description": "最长运行秒数，默认 30"},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    validate=lambda args: commands.validate_command(**args),
+    prepare=_prepare_command,
 ))
