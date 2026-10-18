@@ -22,6 +22,9 @@ class WorkspaceTests(unittest.TestCase):
         workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
+        fixture_patch = patch.object(permissions, "DEFAULT_WORKSPACE", self.workspace)
+        fixture_patch.start()
+        self.addCleanup(fixture_patch.stop)
         self.sources = {
             "demo/main.py": "from src.stats import summarize\nprint(summarize([12, 18, 30]))\n",
             "demo/src/stats.py": 'def summarize(values):\n    return {"total": sum(values)}\n',

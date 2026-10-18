@@ -356,7 +356,7 @@ register_tool(Tool(
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "在 workspace 内创建或覆盖完整 UTF-8 文件，父目录必须已存在；路径限制与读取相同。project.txt、next_step.txt、test_main.py 和 demo_project/test_stats.py 只读。写入前需用户确认。",
+            "description": "在当前 workspace 内创建或覆盖完整 UTF-8 文件，父目录必须已存在；路径限制与读取相同。课程固定只读文件由本次工作目录规则决定，写入前需用户确认。",
             "parameters": {
                 "type": "object",
                 "properties": {

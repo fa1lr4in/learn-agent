@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
+from . import permissions
+
 
 def record_event(log_file: TextIO | None, event: str, **details) -> None:
     """Append and flush one JSON event without receiving API credentials."""
@@ -19,6 +21,13 @@ def load_history(path: str) -> list[dict]:
     """Restore completed or request-limited history without replaying tools."""
     try:
         entries = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not isinstance(entries[0], dict) or entries[0].get("event") != "run_start":
+            raise ValueError("日志缺少运行开始记录，无法确认工作目录。")
+        saved_root = entries[0].get("workspace", str(permissions.DEFAULT_WORKSPACE.resolve()))
+        if not isinstance(saved_root, str) or not Path(saved_root).is_absolute():
+            raise ValueError("日志中的工作目录必须是绝对路径。")
+        if Path(saved_root).resolve() != permissions.WORKSPACE.resolve():
+            raise ValueError("日志属于另一个工作目录；请用 --workspace 指定原项目目录后恢复。无目录记录的旧日志只能在默认练习目录恢复。")
         if entries[-1]["event"] != "run_end" or entries[-1]["reason"] not in ("stop", "max_model_calls"):
             raise ValueError("目前只支持恢复正常结束或因模型请求次数上限停止的会话。")
         end_reason = entries[-1]["reason"]

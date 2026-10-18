@@ -137,7 +137,7 @@ class ResumeTests(unittest.TestCase):
         running = {"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [{
             "id": "call_new_run", "type": "function", "function": {"name": "run_python", "arguments": '{"path":"main.py"}'},
         }]}}]}
-        with patch.object(permissions, "WORKSPACE", self.root), patch("learn_agent.tools.write_file") as writer:
+        with patch.object(permissions, "WORKSPACE", self.root), patch.object(permissions, "DEFAULT_WORKSPACE", self.root), patch("learn_agent.tools.write_file") as writer:
             with patch("learn_agent.tools.run_python", wraps=tools.run_python) as runner:
                 model, _, approval, _ = self.run_cli(["--resume", str(self.source), "重新运行 main.py"], [running, self.final])
         self.assertEqual(model.call_count, 2)

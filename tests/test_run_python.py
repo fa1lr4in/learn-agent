@@ -22,6 +22,9 @@ class RunPythonTests(unittest.TestCase):
         workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
+        fixture_patch = patch.object(permissions, "DEFAULT_WORKSPACE", self.workspace)
+        fixture_patch.start()
+        self.addCleanup(fixture_patch.stop)
         self.payload = {"messages": [{"role": "system", "content": "test"}, {"role": "user", "content": "run"}]}
         self.response = {"choices": [{"finish_reason": "tool_calls", "message": {
             "role": "assistant", "content": None, "tool_calls": [{

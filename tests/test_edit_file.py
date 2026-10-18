@@ -22,6 +22,9 @@ class EditFileTests(unittest.TestCase):
         workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
+        fixture_patch = patch.object(permissions, "DEFAULT_WORKSPACE", self.workspace)
+        fixture_patch.start()
+        self.addCleanup(fixture_patch.stop)
         self.path = "demo/main.py"
         self.target = self.workspace / self.path
         self.code = "from helpers import total\n\nvalues = [12, 18, 30]\nprint(total(values))\n"
