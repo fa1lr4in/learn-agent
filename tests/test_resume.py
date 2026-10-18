@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
+from learn_agent import events, loop, permissions, tools
 
 
 class ResumeTests(unittest.TestCase):
@@ -51,7 +52,7 @@ class ResumeTests(unittest.TestCase):
         with patch.object(sys, "argv", ["tool_call.py", *arguments]):
             with patch.dict(os.environ, {"DEEPSEEK_MODEL": "current-model"}):
                 with patch("tool_call.get_api_key", return_value="current-offline-key") as key:
-                    with patch("tool_call.call_model", side_effect=replies) as model:
+                    with patch("learn_agent.loop.call_model", side_effect=replies) as model:
                         with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
         return model, key, approval, output.getvalue()
@@ -70,12 +71,12 @@ class ResumeTests(unittest.TestCase):
         return pending
 
     def test_loads_complete_history_including_last_assistant_answer(self):
-        history = tool_call.load_history(str(self.source))
+        history = events.load_history(str(self.source))
         self.assertEqual(history, [*self.old_messages[1:], self.old_final])
 
     def test_resume_uses_current_settings_and_does_not_replay_old_tools(self):
         original = self.source.read_bytes()
-        with patch("tool_call.write_file") as writer, patch("tool_call.run_python") as runner:
+        with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.run_python") as runner:
             model, key, approval, output = self.run_cli(["--resume", str(self.source), "上次结果是什么？"], [self.final])
         key.assert_called_once_with()
         approval.assert_not_called()
@@ -98,7 +99,7 @@ class ResumeTests(unittest.TestCase):
         self.assertNotIn("current-offline-key", new_log.read_text(encoding="utf-8"))
 
     def test_preview_restores_history_without_network_tools_or_new_log(self):
-        with patch("tool_call.write_file") as writer, patch("tool_call.run_python") as runner:
+        with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.run_python") as runner:
             model, key, approval, output = self.run_cli(["--preview", "--resume", str(self.source), "继续讨论"], [])
         payload, _ = json.JSONDecoder().raw_decode(output.split("\n", 1)[1])
         self.assertEqual(payload["messages"][1:-1], [*self.old_messages[1:], self.old_final])
@@ -110,7 +111,7 @@ class ResumeTests(unittest.TestCase):
     def test_limit_resume_preview_marks_pending_calls_as_not_executed(self):
         pending = self.save_limit_log()
         original = self.source.read_bytes()
-        with patch("tool_call.write_file") as writer, patch("tool_call.run_python") as runner:
+        with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.run_python") as runner:
             model, key, approval, output = self.run_cli(["--preview", "--resume", str(self.source), "继续任务"], [])
         payload, _ = json.JSONDecoder().raw_decode(output.split("\n", 1)[1])
         self.assertEqual(payload["messages"][1:4], self.old_messages[1:])
@@ -136,8 +137,8 @@ class ResumeTests(unittest.TestCase):
         running = {"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [{
             "id": "call_new_run", "type": "function", "function": {"name": "run_python", "arguments": '{"path":"main.py"}'},
         }]}}]}
-        with patch.object(tool_call, "WORKSPACE", self.root), patch("tool_call.write_file") as writer:
-            with patch("tool_call.run_python", wraps=tool_call.run_python) as runner:
+        with patch.object(permissions, "WORKSPACE", self.root), patch("learn_agent.tools.write_file") as writer:
+            with patch("learn_agent.tools.run_python", wraps=tools.run_python) as runner:
                 model, _, approval, _ = self.run_cli(["--resume", str(self.source), "重新运行 main.py"], [running, self.final])
         self.assertEqual(model.call_count, 2)
         approval.assert_called_once()
@@ -183,18 +184,18 @@ class ResumeTests(unittest.TestCase):
             with self.subTest(case=index):
                 self.save_entries(entries)
                 with patch.object(sys, "argv", ["tool_call.py", "--resume", str(self.source), "继续"]):
-                    with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model, self.assertRaises(SystemExit):
+                    with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, self.assertRaises(SystemExit):
                         tool_call.main()
                 key.assert_not_called()
                 model.assert_not_called()
                 self.assertEqual(list(self.logs.iterdir()), [self.source])
         self.source.write_text("{broken json", encoding="utf-8")
         with self.assertRaises(ValueError):
-            tool_call.load_history(str(self.source))
+            events.load_history(str(self.source))
 
     def test_resume_requires_an_explicit_new_task(self):
         with patch.object(sys, "argv", ["tool_call.py", "--resume", str(self.source)]):
-            with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stopped:
                     tool_call.main()
         self.assertEqual(stopped.exception.code, 2)
@@ -205,7 +206,7 @@ class ResumeTests(unittest.TestCase):
         reading = {"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [{
             "id": "call_new", "type": "function", "function": {"name": "read_file", "arguments": '{"path":"project.txt"}'},
         }]}}]}
-        with patch("tool_call.read_file", return_value="项目资料") as reader, patch("tool_call.write_file") as writer:
+        with patch("learn_agent.tools.read_file", return_value="项目资料") as reader, patch("learn_agent.tools.write_file") as writer:
             model, _, approval, _ = self.run_cli(["--resume", str(self.source), "再读一次项目资料"], [reading, self.final])
         self.assertEqual(model.call_count, 2)
         approval.assert_called_once()

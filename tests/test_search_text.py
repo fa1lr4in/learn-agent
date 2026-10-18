@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
+from learn_agent import loop, permissions, tools
 
 
 class SearchTextTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class SearchTextTests(unittest.TestCase):
         self.assertEqual(self.root.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.directory.cleanup)
         self.workspace = self.root / "workspace"
-        workspace_patch = patch.object(tool_call, "WORKSPACE", self.workspace)
+        workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
         self.sources = {
@@ -40,7 +41,7 @@ class SearchTextTests(unittest.TestCase):
         ]}}]}
 
     def test_returns_workspace_paths_and_one_based_line_numbers(self):
-        result = tool_call.search_text("summarize")
+        result = tools.search_text("summarize")
         self.assertEqual([(item["path"], item["line"]) for item in result["matches"]],
                          [("demo/main.py", 1), ("demo/main.py", 3), ("demo/src/stats.py", 1)])
         self.assertEqual(result["scope"], "visible_workspace_text")
@@ -54,31 +55,31 @@ class SearchTextTests(unittest.TestCase):
     def test_chinese_and_regex_metacharacters_are_literal_and_case_sensitive(self):
         for query, number in [("中文", 1), ("[a.*]", 2), ("SUMMARIZE", 3)]:
             with self.subTest(query=query):
-                result = tool_call.search_text(query, "demo")
+                result = tools.search_text(query, "demo")
                 self.assertEqual([(item["path"], item["line"]) for item in result["matches"]], [("demo/notes.txt", number)])
-        self.assertEqual(tool_call.search_text("Summarize", "demo")["matches"], [])
+        self.assertEqual(tools.search_text("Summarize", "demo")["matches"], [])
 
     def test_result_limit_is_only_truncated_when_more_matches_exist(self):
-        limited = tool_call.search_text("summarize", "demo", 1)
+        limited = tools.search_text("summarize", "demo", 1)
         self.assertEqual(len(limited["matches"]), 1)
         self.assertTrue(limited["truncated"])
-        exact = tool_call.search_text("summarize", "demo", 3)
+        exact = tools.search_text("summarize", "demo", 3)
         self.assertEqual(len(exact["matches"]), 3)
         self.assertFalse(exact["truncated"])
-        narrowed = tool_call.search_text("summarize", "demo/src", 1)
+        narrowed = tools.search_text("summarize", "demo/src", 1)
         self.assertEqual(len(narrowed["matches"]), 1)
         self.assertFalse(narrowed["truncated"])
 
     def test_long_line_excerpt_contains_the_match_and_is_bounded(self):
         (self.workspace / "demo/long.txt").write_bytes(("x" * 300 + "关键词" + "y" * 400).encode("utf-8"))
-        item = tool_call.search_text("关键词", "demo")["matches"][0]
+        item = tools.search_text("关键词", "demo")["matches"][0]
         self.assertEqual(item["line"], 1)
         self.assertEqual(len(item["text"]), 200)
         self.assertIn("关键词", item["text"])
         self.assertTrue(item["text_truncated"])
 
     def test_excludes_hidden_dependencies_binary_invalid_and_large_files(self):
-        for directory in (*tool_call.SEARCH_IGNORED_DIRS, ".git", "BUILD"):
+        for directory in (*tools.SEARCH_IGNORED_DIRS, ".git", "BUILD"):
             target = self.workspace / "demo" / directory / "ignored.txt"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"needle\n")
@@ -86,8 +87,8 @@ class SearchTextTests(unittest.TestCase):
         (self.workspace / "demo/public.txt").write_bytes(b"needle\n")
         (self.workspace / "demo/binary.bin").write_bytes(b"needle\x00")
         (self.workspace / "demo/invalid.txt").write_bytes(b"needle\xff")
-        (self.workspace / "demo/large.txt").write_bytes(b"needle" + b"x" * tool_call.MAX_SEARCH_FILE_BYTES)
-        result = tool_call.search_text("needle")
+        (self.workspace / "demo/large.txt").write_bytes(b"needle" + b"x" * tools.MAX_SEARCH_FILE_BYTES)
+        result = tools.search_text("needle")
         self.assertEqual([item["path"] for item in result["matches"]], ["demo/public.txt"])
         self.assertEqual(result["skipped_files"], 3)
         self.assertFalse(result["truncated"])
@@ -108,7 +109,7 @@ class SearchTextTests(unittest.TestCase):
             return targets.get(path, original_resolve(path, *args, **kwargs))
 
         with patch.object(Path, "resolve", autospec=True, side_effect=resolve):
-            self.assertEqual(tool_call.search_text("needle")["matches"], [])
+            self.assertEqual(tools.search_text("needle")["matches"], [])
 
     def test_unreadable_files_and_directories_report_partial_search_counts(self):
         original_open, original_walk = Path.open, os.walk
@@ -122,8 +123,8 @@ class SearchTextTests(unittest.TestCase):
             kwargs["onerror"](PermissionError("private directory detail"))
             yield from original_walk(*args, **kwargs)
 
-        with patch.object(Path, "open", autospec=True, side_effect=open_file), patch("tool_call.os.walk", side_effect=walk):
-            result = tool_call.search_text("summarize")
+        with patch.object(Path, "open", autospec=True, side_effect=open_file), patch("learn_agent.tools.os.walk", side_effect=walk):
+            result = tools.search_text("summarize")
         self.assertEqual(len(result["matches"]), 3)
         self.assertEqual(result["skipped_files"], 1)
         self.assertEqual(result["skipped_directories"], 1)
@@ -140,8 +141,8 @@ class SearchTextTests(unittest.TestCase):
         log_dir = self.root / "logs"
         before = {name: (self.workspace / name).read_bytes() for name in self.sources}
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "搜索定位"]):
-            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("tool_call.call_model", side_effect=replies):
-                with patch("tool_call.write_file") as writer, patch("tool_call.apply_edit") as editor, patch("tool_call.run_python") as runner:
+            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.loop.call_model", side_effect=replies):
+                with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.apply_edit") as editor, patch("learn_agent.tools.run_python") as runner:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         tool_call.main()
         for operation in (writer, editor, runner, approval):
@@ -162,10 +163,10 @@ class SearchTextTests(unittest.TestCase):
         reply = self.response([("search", "search_text", {"query": "summarize"})])
         for answer in ("y", "n"):
             with self.subTest(answer=answer):
-                with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
-                    with patch("tool_call.search_text", return_value={"matches": [], "truncated": False}) as search:
+                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                    with patch("learn_agent.tools.search_text", return_value={"matches": [], "truncated": False}) as search:
                         with patch("builtins.input", return_value=answer) as approval, contextlib.redirect_stdout(io.StringIO()):
-                            reason = tool_call.run_agent(self.payload, "offline-placeholder")
+                            reason = loop.run_agent(self.payload, "offline-placeholder")
                 approval.assert_called_once()
                 self.assertEqual(reason, "stop" if answer == "y" else "user_denied")
                 self.assertEqual(model.call_count, 2 if answer == "y" else 1)
@@ -182,22 +183,22 @@ class SearchTextTests(unittest.TestCase):
         for arguments in invalid:
             with self.subTest(arguments=arguments):
                 reply = self.response([("bad", "search_text", arguments)])
-                with patch("tool_call.call_model", return_value=reply), patch("tool_call.search_text") as search:
+                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.tools.search_text") as search:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 search.assert_not_called()
                 approval.assert_not_called()
 
     def test_empty_search_is_success_and_wrong_directory_is_a_tool_error(self):
-        result = tool_call.search_text("not present", "demo")
+        result = tools.search_text("not present", "demo")
         self.assertEqual(result["matches"], [])
         self.assertFalse(result["truncated"])
         for path in ("missing", "demo/main.py"):
             with self.subTest(path=path):
                 reply = self.response([("error", "search_text", {"query": "word", "path": path})])
-                with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
                 error = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
                 self.assertFalse(error["ok"])
@@ -206,16 +207,16 @@ class SearchTextTests(unittest.TestCase):
 
     def test_default_limit_returns_twenty_rows_and_maximum_can_return_more(self):
         (self.workspace / "demo/many.txt").write_bytes(b"needle\n" * 25)
-        result = tool_call.search_text("needle", "demo")
+        result = tools.search_text("needle", "demo")
         self.assertEqual(len(result["matches"]), 20)
         self.assertTrue(result["truncated"])
-        result = tool_call.search_text("needle", "demo", 50)
+        result = tools.search_text("needle", "demo", 50)
         self.assertEqual(len(result["matches"]), 25)
         self.assertFalse(result["truncated"])
 
     def test_preview_advertises_search_without_key_network_or_file_search(self):
         with patch.object(sys, "argv", ["tool_call.py", "--preview"]), patch.object(tool_call, "LOG_DIR", self.root / "logs"):
-            with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model, patch("tool_call.search_text") as search:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.search_text") as search:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

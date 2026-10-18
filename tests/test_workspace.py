@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
+from learn_agent import loop, permissions, tools
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class WorkspaceTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
-        workspace_patch = patch.object(tool_call, "WORKSPACE", self.workspace)
+        workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
         self.sources = {
@@ -39,18 +40,18 @@ class WorkspaceTests(unittest.TestCase):
         ]}}]}
 
     def test_lists_one_level_and_reads_nested_utf8_source(self):
-        self.assertEqual(tool_call.list_files(), ["demo/"])
-        self.assertEqual(tool_call.list_files("demo"), ["main.py", "src/"])
-        self.assertEqual(tool_call.list_files("demo/src"), ["stats.py"])
+        self.assertEqual(tools.list_files(), ["demo/"])
+        self.assertEqual(tools.list_files("demo"), ["main.py", "src/"])
+        self.assertEqual(tools.list_files("demo/src"), ["stats.py"])
         for name, content in self.sources.items():
             with self.subTest(path=name):
-                self.assertEqual(tool_call.read_file(name), content)
+                self.assertEqual(tools.read_file(name), content)
 
     def test_rejects_absolute_parent_hidden_and_invalid_paths(self):
         paths = ["../outside.txt", "demo/../../outside.txt", str(self.root / "outside.txt"),
                  "C:relative.txt", "main.py:stream", ".env", "demo/.git/config", "", None, True, []]
         for path in paths:
-            for operation in (tool_call.read_file, tool_call.list_files, tool_call.resolve_write_path, tool_call.resolve_python_path):
+            for operation in (tools.read_file, tools.list_files, permissions.resolve_write_path, permissions.resolve_python_path):
                 with self.subTest(path=path, operation=operation.__name__), self.assertRaises(ValueError):
                     operation(path)
 
@@ -58,7 +59,7 @@ class WorkspaceTests(unittest.TestCase):
         (self.workspace / ".env").write_text("offline-private-value", encoding="utf-8")
         (self.workspace / ".git").mkdir()
         (self.workspace / "notes.txt").write_text("公开资料", encoding="utf-8")
-        self.assertEqual(tool_call.list_files(), ["demo/", "notes.txt"])
+        self.assertEqual(tools.list_files(), ["demo/", "notes.txt"])
 
     def test_resolved_paths_outside_workspace_are_rejected_and_not_listed(self):
         alias = self.workspace / "external.py"
@@ -72,15 +73,15 @@ class WorkspaceTests(unittest.TestCase):
 
         with patch.object(Path, "resolve", autospec=True, side_effect=resolve):
             with self.assertRaises(ValueError):
-                tool_call.read_file("external.py")
+                tools.read_file("external.py")
             with self.assertRaises(ValueError):
-                tool_call.list_files("external.py")
+                tools.list_files("external.py")
             with self.assertRaises(ValueError):
-                tool_call.write_file("external.py", "overwritten")
-            with patch("tool_call.subprocess.run") as process, self.assertRaises(ValueError):
-                tool_call.run_python("external.py")
+                tools.write_file("external.py", "overwritten")
+            with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+                tools.run_python("external.py")
             process.assert_not_called()
-            self.assertEqual(tool_call.list_files(), ["demo/"])
+            self.assertEqual(tools.list_files(), ["demo/"])
         self.assertEqual(outside.read_text(encoding="utf-8"), "outside content")
 
     def test_agent_browses_subdirectories_then_reads_sources(self):
@@ -90,10 +91,10 @@ class WorkspaceTests(unittest.TestCase):
             self.response([("call_stats", "read_file", {"path": "demo/src/stats.py"})]),
             self.final,
         ]
-        with patch("tool_call.call_model", side_effect=replies) as model:
-            with patch("tool_call.write_file") as writer, patch("tool_call.run_python") as runner:
+        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+            with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.run_python") as runner:
                 with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
-                    reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                    reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 4)
         for operation in (writer, runner, approval):
@@ -117,10 +118,10 @@ class WorkspaceTests(unittest.TestCase):
             ("list_files", {"path": "demo", "recursive": True}),
         ]:
             with self.subTest(tool=name, arguments=arguments):
-                with patch("tool_call.call_model", return_value=self.response([("call_invalid", name, arguments)])):
-                    with patch("tool_call.read_file") as reader, patch("tool_call.list_files") as lister:
+                with patch("learn_agent.loop.call_model", return_value=self.response([("call_invalid", name, arguments)])):
+                    with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister:
                         with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                            tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                            loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 for operation in (reader, lister, approval):
                     operation.assert_not_called()
 
@@ -132,9 +133,9 @@ class WorkspaceTests(unittest.TestCase):
         ]:
             with self.subTest(tool=name, path=path):
                 replies = [self.response([("call_error", name, {"path": path})]), self.final]
-                with patch("tool_call.call_model", side_effect=replies) as model:
+                with patch("learn_agent.loop.call_model", side_effect=replies) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        reason = tool_call.run_agent(copy.deepcopy(self.payload), "offline-placeholder", auto_read=True)
+                        reason = loop.run_agent(copy.deepcopy(self.payload), "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
                 self.assertEqual(reason, "stop")
                 result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
@@ -173,9 +174,9 @@ class WorkspaceTests(unittest.TestCase):
             self.final,
         ]
         log_file = io.StringIO()
-        with patch("tool_call.call_model", side_effect=replies) as model:
+        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 5)
         self.assertEqual(approval.call_count, 4)
@@ -201,25 +202,25 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual([entry["result"] for entry in entries if entry["event"] == "tool_result"], results)
 
     def test_nested_script_imports_project_module_and_reads_local_data(self):
-        tool_call.write_file("demo/input.txt", "项目本地资料")
-        tool_call.write_file("demo/main.py", 'from pathlib import Path\nfrom src.stats import summarize\n'
+        tools.write_file("demo/input.txt", "项目本地资料")
+        tools.write_file("demo/main.py", 'from pathlib import Path\nfrom src.stats import summarize\n'
                              'print(Path("input.txt").read_text(encoding="utf-8"))\nprint(summarize([12, 18, 30]))\n')
-        result = tool_call.run_python("demo/main.py")
+        result = tools.run_python("demo/main.py")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.splitlines(), ["项目本地资料", "{'total': 60}"])
         self.assertEqual(result.stderr, "")
 
     def test_read_only_fixtures_cannot_be_overwritten_before_confirmation(self):
-        for path in (*tool_call.READ_ONLY_FILES, "demo_project/./test_stats.py"):
+        for path in (*permissions.READ_ONLY_FILES, "demo_project/./test_stats.py"):
             with self.subTest(path=path):
                 reply = self.response([("call_write", "write_file", {"path": path, "content": "skip tests"})])
-                with patch("tool_call.call_model", return_value=reply), patch("tool_call.write_file") as writer:
+                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.tools.write_file") as writer:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 writer.assert_not_called()
                 approval.assert_not_called()
                 with self.assertRaises(ValueError):
-                    tool_call.write_file(path, "skip tests")
+                    tools.write_file(path, "skip tests")
 
     def test_nested_write_and_run_still_require_confirmation(self):
         original = (self.workspace / "demo/main.py").read_bytes()
@@ -228,9 +229,9 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(tool=name):
                 log_file = io.StringIO()
                 reply = self.response([("call_denied", name, arguments)])
-                with patch("tool_call.call_model", return_value=reply) as model, patch("tool_call.subprocess.run") as process:
+                with patch("learn_agent.loop.call_model", return_value=reply) as model, patch("learn_agent.tools.subprocess.run") as process:
                     with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                        reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
                 self.assertEqual(reason, "user_denied")
                 model.assert_called_once()
                 approval.assert_called_once()
@@ -242,9 +243,9 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_missing_parent_is_reported_without_creating_directories(self):
         reply = self.response([("call_missing", "write_file", {"path": "missing/main.py", "content": "print(1)\n"})])
-        with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
         self.assertFalse(result["ok"])

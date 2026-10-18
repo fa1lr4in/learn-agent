@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
+from learn_agent import loop, permissions, tools
 
 
 class EditFileTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class EditFileTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.workspace = self.root / "workspace"
         (self.workspace / "demo").mkdir(parents=True)
-        workspace_patch = patch.object(tool_call, "WORKSPACE", self.workspace)
+        workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
         self.path = "demo/main.py"
@@ -39,7 +40,7 @@ class EditFileTests(unittest.TestCase):
 
     def test_preview_does_not_modify_and_commit_changes_only_one_fragment(self):
         before = self.target.read_bytes()
-        original, updated, diff = tool_call.prepare_edit(**self.arguments)
+        original, updated, diff = tools.prepare_edit(**self.arguments)
         self.assertEqual(self.target.read_bytes(), before)
         self.assertEqual(original, before)
         self.assertEqual(updated, self.code.replace("[12, 18, 30]", "[5, 10, 15]").encode("utf-8"))
@@ -47,7 +48,7 @@ class EditFileTests(unittest.TestCase):
         self.assertIn("+++ b/demo/main.py", diff)
         self.assertIn("-values = [12, 18, 30]", diff)
         self.assertIn("+values = [5, 10, 15]", diff)
-        tool_call.apply_edit(self.path, original, updated)
+        tools.apply_edit(self.path, original, updated)
         self.assertEqual(self.target.read_bytes(), updated)
 
     def test_read_edit_run_and_final_log_form_one_complete_task(self):
@@ -60,7 +61,7 @@ class EditFileTests(unittest.TestCase):
         log_dir = self.root / "logs"
         helper_before = self.helper.read_bytes()
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "局部修改"]):
-            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("tool_call.call_model", side_effect=replies):
+            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.loop.call_model", side_effect=replies):
                 with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                     tool_call.main()
         self.assertEqual(approval.call_count, 2)
@@ -87,9 +88,9 @@ class EditFileTests(unittest.TestCase):
                 original = source.encode("utf-8")
                 self.target.write_bytes(original)
                 reply = self.response([("edit", "edit_file", {"path": self.path, "old_text": old, "new_text": new})])
-                with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 self.assertEqual(reason, "stop")
                 approval.assert_not_called()
                 self.assertEqual(self.target.read_bytes(), original)
@@ -101,9 +102,9 @@ class EditFileTests(unittest.TestCase):
         wrong = {**self.arguments, "old_text": "old code that is not present"}
         replies = [self.response([("wrong", "edit_file", wrong)]),
                    self.response([("correct", "edit_file", self.arguments)]), self.final]
-        with patch("tool_call.call_model", side_effect=replies) as model:
+        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         approval.assert_called_once()
         conflict = json.loads(model.call_args_list[1].args[0]["messages"][-1]["content"])
@@ -122,9 +123,9 @@ class EditFileTests(unittest.TestCase):
             self.assertIn("按差异编辑 demo/main.py", prompt)
             return "n"
 
-        with patch("tool_call.call_model", return_value=reply) as model, patch("tool_call.run_python") as runner:
+        with patch("learn_agent.loop.call_model", return_value=reply) as model, patch("learn_agent.tools.run_python") as runner:
             with patch("builtins.input", side_effect=reject), contextlib.redirect_stdout(output):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "user_denied")
         model.assert_called_once()
         runner.assert_not_called()
@@ -140,9 +141,9 @@ class EditFileTests(unittest.TestCase):
             self.target.write_bytes(external)
             return "y"
 
-        with patch("tool_call.call_model", side_effect=[self.response([("edit", "edit_file", self.arguments)]), self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[self.response([("edit", "edit_file", self.arguments)]), self.final]) as model:
             with patch("builtins.input", side_effect=approve_after_external_change), contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(self.target.read_bytes(), external)
         result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
@@ -154,31 +155,31 @@ class EditFileTests(unittest.TestCase):
             with self.subTest(newline=repr(newline)):
                 before = ("\ufeff# 中文注释" + newline + "left = 1" + newline + "right = 2" + newline + "# 尾部").encode("utf-8")
                 self.target.write_bytes(before)
-                original, updated, _ = tool_call.prepare_edit(self.path, "left = 1\nright = 2", "left = 3\nright = 4")
+                original, updated, _ = tools.prepare_edit(self.path, "left = 1\nright = 2", "left = 3\nright = 4")
                 expected = before.replace(("left = 1" + newline + "right = 2").encode(),
                                           ("left = 3" + newline + "right = 4").encode())
-                tool_call.apply_edit(self.path, original, updated)
+                tools.apply_edit(self.path, original, updated)
                 self.assertEqual(self.target.read_bytes(), expected)
         before = "前言\r\nleft = 1\nright = 2\r\n尾部\r\n".encode("utf-8")
         self.target.write_bytes(before)
-        original, updated, _ = tool_call.prepare_edit(self.path, "left = 1\nright = 2", "left = 3\nright = 4")
-        tool_call.apply_edit(self.path, original, updated)
+        original, updated, _ = tools.prepare_edit(self.path, "left = 1\nright = 2", "left = 3\nright = 4")
+        tools.apply_edit(self.path, original, updated)
         self.assertEqual(self.target.read_bytes(), before.replace(b"left = 1\nright = 2", b"left = 3\nright = 4"))
 
     def test_matching_is_literal_and_deletion_can_leave_an_empty_file(self):
         self.target.write_bytes(b"a[0] = 1\n")
-        original, updated, _ = tool_call.prepare_edit(self.path, "a[0] = 1", "a[0] = 2")
-        tool_call.apply_edit(self.path, original, updated)
+        original, updated, _ = tools.prepare_edit(self.path, "a[0] = 1", "a[0] = 2")
+        tools.apply_edit(self.path, original, updated)
         self.assertEqual(self.target.read_bytes(), b"a[0] = 2\n")
-        original, updated, diff = tool_call.prepare_edit(self.path, "a[0] = 2\n", "")
-        tool_call.apply_edit(self.path, original, updated)
+        original, updated, diff = tools.prepare_edit(self.path, "a[0] = 2\n", "")
+        tools.apply_edit(self.path, original, updated)
         self.assertTrue(self.target.is_file())
         self.assertEqual(self.target.read_bytes(), b"")
         self.assertIn("-a[0] = 2", diff)
 
     def test_diff_marks_a_missing_final_newline(self):
         self.target.write_bytes(b"old")
-        _, updated, diff = tool_call.prepare_edit(self.path, "old", "new")
+        _, updated, diff = tools.prepare_edit(self.path, "old", "new")
         self.assertEqual(updated, b"new")
         self.assertIn("-old\n\\ No newline at end of file\n", diff)
         self.assertIn("+new\n\\ No newline at end of file\n", diff)
@@ -188,14 +189,14 @@ class EditFileTests(unittest.TestCase):
             {**self.arguments, "old_text": ""}, {**self.arguments, "old_text": None},
             {**self.arguments, "new_text": None}, {**self.arguments, "extra": True},
             {"path": self.path, "old_text": "values"},
-            *[{**self.arguments, "path": path} for path in ("../outside.py", ".env", "demo/.git/config", *tool_call.READ_ONLY_FILES)],
+            *[{**self.arguments, "path": path} for path in ("../outside.py", ".env", "demo/.git/config", *permissions.READ_ONLY_FILES)],
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments):
-                with patch("tool_call.call_model", return_value=self.response([("bad", "edit_file", arguments)])):
-                    with patch("tool_call.prepare_edit") as prepare, patch("builtins.input") as approval:
+                with patch("learn_agent.loop.call_model", return_value=self.response([("bad", "edit_file", arguments)])):
+                    with patch("learn_agent.tools.prepare_edit") as prepare, patch("builtins.input") as approval:
                         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                            tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                            loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 prepare.assert_not_called()
                 approval.assert_not_called()
 
@@ -204,9 +205,9 @@ class EditFileTests(unittest.TestCase):
         for path, error_type in [("demo/missing.py", "FileNotFoundError"), ("demo/binary.txt", "UnicodeDecodeError")]:
             with self.subTest(path=path):
                 reply = self.response([("error", "edit_file", {**self.arguments, "path": path})])
-                with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
                 result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
                 self.assertEqual(result["path"], path)
@@ -215,9 +216,9 @@ class EditFileTests(unittest.TestCase):
     def test_same_batch_prepares_each_edit_after_the_previous_write(self):
         second = {"path": self.path, "old_text": "print(total(values))", "new_text": "print('total:', total(values))"}
         reply = self.response([("first", "edit_file", self.arguments), ("second", "edit_file", second)])
-        with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(approval.call_count, 2)
         results = [json.loads(message["content"]) for message in model.call_args_list[-1].args[0]["messages"] if message["role"] == "tool"]
@@ -227,7 +228,7 @@ class EditFileTests(unittest.TestCase):
 
     def test_preview_advertises_edit_without_reading_writing_or_network(self):
         with patch.object(sys, "argv", ["tool_call.py", "--preview"]), patch("tool_call.get_api_key") as key:
-            with patch("tool_call.call_model") as model, patch("tool_call.prepare_edit") as prepare, patch("tool_call.apply_edit") as apply:
+            with patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.prepare_edit") as prepare, patch("learn_agent.tools.apply_edit") as apply:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

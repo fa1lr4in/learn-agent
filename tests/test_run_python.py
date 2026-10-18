@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import tool_call
+from learn_agent import loop, permissions, tools
 
 
 class RunPythonTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class RunPythonTests(unittest.TestCase):
         self.workspace = Path(self.directory.name)
         self.assertEqual(self.workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.directory.cleanup)
-        workspace_patch = patch.object(tool_call, "WORKSPACE", self.workspace)
+        workspace_patch = patch.object(permissions, "WORKSPACE", self.workspace)
         workspace_patch.start()
         self.addCleanup(workspace_patch.stop)
         self.payload = {"messages": [{"role": "system", "content": "test"}, {"role": "user", "content": "run"}]}
@@ -40,9 +41,9 @@ class RunPythonTests(unittest.TestCase):
             },
         }
         log_file = io.StringIO()
-        with patch("tool_call.call_model", side_effect=[writing, self.response, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[writing, self.response, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 3)
         self.assertEqual(approval.call_count, 2)
@@ -79,9 +80,9 @@ class RunPythonTests(unittest.TestCase):
             }
             responses.append(response)
         log_file = io.StringIO()
-        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 5)
         self.assertEqual(approval.call_count, 4)
@@ -116,8 +117,8 @@ class RunPythonTests(unittest.TestCase):
         (self.workspace / "test_main.py").write_bytes(test_content)
         broken_code = "def sum_to(n):\n    return sum(range(1, n))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n"
         fixed_code = broken_code.replace("range(1, n)", "range(1, n + 1)")
-        tool_call.write_file("main.py", broken_code)
-        ordinary_run = tool_call.run_python("main.py")
+        tools.write_file("main.py", broken_code)
+        ordinary_run = tools.run_python("main.py")
         self.assertEqual(ordinary_run.returncode, 0)
         self.assertEqual(ordinary_run.stdout.strip(), "4950")
         self.assertEqual(ordinary_run.stderr, "")
@@ -137,9 +138,9 @@ class RunPythonTests(unittest.TestCase):
             }
             responses.append(response)
         log_file = io.StringIO()
-        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 6)
         self.assertEqual(approval.call_count, 5)
@@ -188,9 +189,9 @@ class RunPythonTests(unittest.TestCase):
             ]
             responses.append(response)
         log_file = io.StringIO()
-        with patch("tool_call.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 4)
         self.assertEqual(approval.call_count, 2)
@@ -235,7 +236,7 @@ class RunPythonTests(unittest.TestCase):
         log_dir = self.workspace / "logs"
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "验证现有脚本"]):
             with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                with patch("tool_call.call_model", side_effect=[running, truncated]) as model, patch("tool_call.write_file") as writer:
+                with patch("learn_agent.loop.call_model", side_effect=[running, truncated]) as model, patch("learn_agent.tools.write_file") as writer:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                         tool_call.main()
         self.assertEqual(model.call_count, 2)
@@ -258,9 +259,9 @@ class RunPythonTests(unittest.TestCase):
 
     def test_child_uses_workspace_and_does_not_inherit_deepseek_key(self):
         (self.workspace / "input.txt").write_text("练习资料", encoding="utf-8")
-        tool_call.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')
+        tools.write_file("main.py", 'import os\nfrom pathlib import Path\nprint(Path("input.txt").read_text(encoding="utf-8"))\nprint("DEEPSEEK_API_KEY" in os.environ)\n')
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "offline-sensitive-test-key"}):
-            completed = tool_call.run_python("main.py")
+            completed = tools.run_python("main.py")
             self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "offline-sensitive-test-key")
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(completed.stdout.splitlines(), ["练习资料", "False"])
@@ -272,9 +273,9 @@ class RunPythonTests(unittest.TestCase):
                 "name": "write_file", "arguments": json.dumps({"path": "main.py", "content": "print(sum(range(1, 101)))\n"}),
             },
         })
-        with patch("tool_call.call_model", side_effect=[self.response, self.final]) as model:
+        with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 2)
         self.assertEqual(approval.call_count, 2)
@@ -286,10 +287,10 @@ class RunPythonTests(unittest.TestCase):
     def test_runtime_and_syntax_errors_are_returned_to_model(self):
         for code, error_type in [('print("开始")\nprint(1 / 0)\n', "ZeroDivisionError"), ("def broken(:\n    pass\n", "SyntaxError")]:
             with self.subTest(error_type=error_type):
-                tool_call.write_file("main.py", code)
-                with patch("tool_call.call_model", side_effect=[self.response, self.final]) as model:
+                tools.write_file("main.py", code)
+                with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_called_once()
                 result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
                 self.assertFalse(result["ok"])
@@ -299,10 +300,10 @@ class RunPythonTests(unittest.TestCase):
                     self.assertIn("开始", result["stdout"])
 
     def test_timeout_terminates_child_and_returns_tool_error(self):
-        tool_call.write_file("main.py", "import time\ntime.sleep(30)\n")
-        with patch.object(tool_call, "RUN_TIMEOUT", 0.3), patch("tool_call.call_model", side_effect=[self.response, self.final]) as model:
+        tools.write_file("main.py", "import time\ntime.sleep(30)\n")
+        with patch.object(tools, "RUN_TIMEOUT", 0.3), patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
-                reason = tool_call.run_agent(self.payload, "offline-placeholder")
+                reason = loop.run_agent(self.payload, "offline-placeholder")
         self.assertEqual(reason, "stop")
         self.assertEqual(model.call_count, 2)
         result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
@@ -311,10 +312,10 @@ class RunPythonTests(unittest.TestCase):
         self.assertNotIn("exit_code", result)
 
     def test_missing_script_does_not_start_process(self):
-        with patch("tool_call.call_model", side_effect=[self.response, self.final]) as model:
-            with patch("tool_call.subprocess.run") as process, patch("builtins.input", return_value="y"):
+        with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
+            with patch("learn_agent.tools.subprocess.run") as process, patch("builtins.input", return_value="y"):
                 with contextlib.redirect_stdout(io.StringIO()):
-                    tool_call.run_agent(self.payload, "offline-placeholder")
+                    loop.run_agent(self.payload, "offline-placeholder")
         process.assert_not_called()
         result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
         self.assertFalse(result["ok"])
@@ -325,19 +326,19 @@ class RunPythonTests(unittest.TestCase):
         for arguments in [{}, {"path": "../chat.py"}, {"path": "report.md"}, {"path": "main.py", "args": ["-c", "print(1)"]}]:
             with self.subTest(arguments=arguments):
                 self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(arguments)
-                with patch("tool_call.call_model", return_value=self.response), patch("tool_call.subprocess.run") as process:
+                with patch("learn_agent.loop.call_model", return_value=self.response), patch("learn_agent.tools.subprocess.run") as process:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
-                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                        loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
                 process.assert_not_called()
-        with patch("tool_call.subprocess.run") as process, self.assertRaises(ValueError):
-            tool_call.run_python("../chat.py")
+        with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+            tools.run_python("../chat.py")
         process.assert_not_called()
 
     def test_runner_rejects_symbolic_link(self):
         with patch.object(Path, "is_symlink", return_value=True):
-            with patch("tool_call.subprocess.run") as process, self.assertRaises(ValueError):
-                tool_call.run_python("main.py")
+            with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+                tools.run_python("main.py")
         process.assert_not_called()
 
     def test_auto_read_does_not_bypass_execution_confirmation(self):
@@ -345,9 +346,9 @@ class RunPythonTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": path})
                 log_file = io.StringIO()
-                with patch("tool_call.call_model", return_value=self.response) as model, patch("tool_call.run_python") as runner:
+                with patch("learn_agent.loop.call_model", return_value=self.response) as model, patch("learn_agent.tools.run_python") as runner:
                     with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
-                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                        reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
                 self.assertEqual(reason, "user_denied")
                 model.assert_called_once()
                 runner.assert_not_called()
@@ -358,7 +359,7 @@ class RunPythonTests(unittest.TestCase):
     def test_preview_shows_runner_without_executing_or_creating_logs(self):
         log_dir = self.workspace / "logs"
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--preview"]):
-            with patch("tool_call.get_api_key") as key, patch("tool_call.call_model") as model, patch("tool_call.run_python") as runner:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.run_python") as runner:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

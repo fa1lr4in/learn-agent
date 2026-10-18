@@ -19,7 +19,7 @@ class ChatTests(unittest.TestCase):
 
         with patch.object(sys, "argv", ["chat.py", *arguments]):
             with patch("chat.get_api_key", return_value="offline-placeholder") as key:
-                with patch("chat.urllib.request.urlopen", side_effect=respond) as transport:
+                with patch("learn_agent.model.urllib.request.urlopen", side_effect=respond) as transport:
                     with patch("builtins.input", side_effect=inputs) as user_input:
                         with contextlib.redirect_stdout(io.StringIO()):
                             chat.main()
