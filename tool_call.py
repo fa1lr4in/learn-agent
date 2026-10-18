@@ -3,12 +3,15 @@
 import argparse
 import json
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from learn_agent import checkpoints, loop, permissions
 from learn_agent.events import load_history, record_event
 from learn_agent.model import get_api_key
+from learn_agent.sessions import SessionStore
 from learn_agent.tools import tool_schemas
 
 
@@ -22,21 +25,32 @@ def main() -> None:
     mode.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读写练习文件")
     mode.add_argument("--diff", metavar="LOG", help="查看该运行检查点中的文件工具修改，不调用模型")
     mode.add_argument("--undo", metavar="LOG", help="展示撤回差异，确认后恢复该运行记录的文件工具修改")
+    mode.add_argument("--sessions", action="store_true", help="列出本地 SQLite 会话，不调用模型")
     parser.add_argument("--auto-read", action="store_true", help="自动允许浏览、搜索和读取 workspace 内的可访问文件并发送结果；写入、编辑和运行仍需确认")
-    parser.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
+    restore = parser.add_mutually_exclusive_group()
+    restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
+    restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
     parser.add_argument("--workspace", metavar="DIR", help="选择项目根目录；相对路径从当前终端目录解析，默认使用本项目的 workspace")
     args = parser.parse_args()
-    if (args.diff or args.undo) and (args.prompt is not None or args.resume):
-        parser.error("查看或撤回检查点时不提供新任务或 --resume。")
-    if args.resume and args.prompt is None:
-        parser.error("使用 --resume 时，请同时提供新的问题或任务。")
+    if (args.diff or args.undo or args.sessions) and (args.prompt is not None or args.resume or args.session):
+        parser.error("查看会话列表、检查或撤回时，不提供新任务或恢复参数。")
+    if (args.resume or args.session) and args.prompt is None:
+        parser.error("使用 --resume 或 --session 时，请同时提供新的问题或任务。")
     try:
         with permissions.use_workspace(args.workspace):
-            if args.diff or args.undo:
+            if args.sessions:
+                store = SessionStore(LOG_DIR / "sessions.sqlite3")
+                print(f"[会话数据库] {store.path}")
+                saved = store.list_sessions()
+                if not saved:
+                    print("尚无已保存的会话。")
+                for session in saved:
+                    print(f"{session.id}  reason={session.reason}  更新于 {session.updated_at}\n  workspace={session.workspace}")
+            elif args.diff or args.undo:
                 review_changes(args.diff or args.undo, undo=bool(args.undo))
             else:
                 run_cli(args)
-    except (ValueError, OSError, RuntimeError) as error:
+    except (ValueError, OSError, RuntimeError, sqlite3.Error) as error:
         raise SystemExit(f"本次实验停止：{error}") from None
 
 
@@ -73,6 +87,8 @@ def review_changes(log_path: str, undo: bool = False) -> None:
 
 def run_cli(args: argparse.Namespace) -> None:
     root = permissions.WORKSPACE.resolve()
+    store = SessionStore(LOG_DIR / "sessions.sqlite3")
+    saved_session = None
     protected = permissions.read_only_paths()
     workspace_instruction = (
         f"本次 workspace 是项目根目录 {root}；所有工具的 path 都相对这个根目录。"
@@ -94,10 +110,13 @@ def run_cli(args: argparse.Namespace) -> None:
         "max_tokens": 2048,
     }
     payload["messages"][0]["content"] = workspace_instruction + payload["messages"][0]["content"]
-    if args.resume:
+    if args.resume or args.session:
         try:
-            history = load_history(args.resume)
-        except (OSError, ValueError) as error:
+            if args.session:
+                saved_session, history = store.restore(args.session, root)
+            else:
+                history = load_history(args.resume)
+        except (OSError, ValueError, sqlite3.Error) as error:
             raise SystemExit(f"无法恢复会话：{error}") from None
         payload["messages"][0]["content"] += "恢复的历史工具结果描述过去的状态；用户要求验证当前文件时，应重新执行相应工具。NotExecuted 是恢复时补充的未执行状态，不表示代码运行失败；若仍需该操作，请重新请求工具。"
         payload["messages"] = [payload["messages"][0], *history, payload["messages"][-1]]
@@ -105,26 +124,39 @@ def run_cli(args: argparse.Namespace) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if args.resume:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
+    elif args.session:
+        print(f"\n[恢复会话] 从 SQLite 会话 {args.session} 载入 {len(history)} 条历史消息。")
     if args.preview:
         print("\n预览结束，没有联网或执行工具，也未创建日志。")
         return
     try:
+        store.initialize()
         api_key = get_api_key()
         LOG_DIR.mkdir(exist_ok=True)
         log_path = LOG_DIR / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
-        with log_path.open("x", encoding="utf-8") as log_file:
-            print(f"\n[本次运行日志] {log_path}")
-            print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-            record_event(log_file, "run_start", workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None)
+        session_id = args.session or uuid4().hex
+        log_file = log_path.open("x", encoding="utf-8")
+        try:
+            with log_file:
+                print(f"\n[本次会话] {session_id}")
+                print(f"[本次运行日志] {log_path}")
+                print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
+                record_event(log_file, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None)
+                try:
+                    with checkpoints.track_changes(log_path):
+                        reason = loop.run_agent(payload, api_key, log_file, auto_read=args.auto_read)
+                except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
+                    reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
+                    record_event(log_file, "run_end", reason=reason, error_type=type(error).__name__)
+                    raise
+                record_event(log_file, "run_end", reason=reason)
+        finally:
             try:
-                with checkpoints.track_changes(log_path):
-                    reason = loop.run_agent(payload, api_key, log_file, auto_read=args.auto_read)
-            except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
-                reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
-                record_event(log_file, "run_end", reason=reason, error_type=type(error).__name__)
-                raise
-            record_event(log_file, "run_end", reason=reason)
-    except (ValueError, OSError, EOFError) as error:
+                store.save_run(session_id, log_path, expected_log=saved_session.last_log if saved_session else None)
+            except (ValueError, OSError, sqlite3.Error) as error:
+                raise SystemExit(f"会话保存失败：{error}\n本次 JSONL 日志保留于 {log_path}，请先核对，不要直接重复副作用操作。") from None
+            print(f"[会话已保存] {session_id} -> {store.path}")
+    except (ValueError, OSError, EOFError, sqlite3.Error) as error:
         raise SystemExit(f"本次实验停止：{error}") from None
     except KeyboardInterrupt:
         raise SystemExit("\n已取消本次实验。") from None
