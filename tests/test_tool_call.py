@@ -63,7 +63,7 @@ class ToolCallTests(unittest.TestCase):
         self.assertEqual([result["content"] for result in results], ["项目资料", "下一步任务"])
         self.assertEqual(len(self.payload["messages"]), 2)
 
-    def test_list_files_only_returns_allowed_existing_files(self):
+    def test_list_files_returns_visible_files_and_subdirectories(self):
         with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
             workspace = Path(directory)
             self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
@@ -71,10 +71,10 @@ class ToolCallTests(unittest.TestCase):
             (workspace / "report.md").write_text("报告", encoding="utf-8")
             (workspace / "main.py").write_text("print(5050)\n", encoding="utf-8")
             (workspace / "test_main.py").write_text("验收脚本", encoding="utf-8")
-            (workspace / "private.txt").write_text("不允许读取", encoding="utf-8")
-            (workspace / "next_step.txt").mkdir()
+            (workspace / ".env").write_text("不允许读取", encoding="utf-8")
+            (workspace / "src").mkdir()
             with patch.object(tool_call, "WORKSPACE", workspace):
-                self.assertEqual(tool_call.list_files(), ["project.txt", "report.md", "main.py", "test_main.py"])
+                self.assertEqual(tool_call.list_files(), ["main.py", "project.txt", "report.md", "src/", "test_main.py"])
 
     def test_read_file_can_inspect_generated_report_and_python_sources(self):
         with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
@@ -98,14 +98,14 @@ class ToolCallTests(unittest.TestCase):
                 with patch("tool_call.read_file", return_value="项目名称：小灯") as reader:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                         tool_call.run_agent(self.payload, "offline-placeholder")
-        lister.assert_called_once_with()
+        lister.assert_called_once_with(".")
         reader.assert_called_once_with("project.txt")
         self.assertEqual(approval.call_count, 2)
         self.assertEqual(model.call_count, 3)
         history = model.call_args_list[-1].args[0]["messages"]
         self.assertEqual([history[index]["tool_call_id"] for index in (3, 5)], ["call_list", "call_test"])
         listed, read = [json.loads(history[index]["content"]) for index in (3, 5)]
-        self.assertEqual(listed, {"ok": True, "tool": "list_files", "scope": "allowlisted_workspace_files", "files": ["project.txt"]})
+        self.assertEqual(listed, {"ok": True, "tool": "list_files", "scope": "visible_workspace_directory", "path": ".", "files": ["project.txt"]})
         self.assertEqual(read["tool"], "read_file")
         self.assertEqual(read["content"], "项目名称：小灯")
 
@@ -270,7 +270,7 @@ class ToolCallTests(unittest.TestCase):
         invalid = [
             ("shell", {}),
             ("read_file", {"path": "../chat.py"}),
-            ("list_files", {"path": "."}),
+            ("list_files", {"path": ".."}),
             ("write_file", {"path": "project.txt", "content": "改写资料"}),
             ("write_file", {"path": "report.md", "content": "报告", "auto_read": True}),
         ]

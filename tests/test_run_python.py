@@ -196,7 +196,7 @@ class RunPythonTests(unittest.TestCase):
         self.assertEqual(approval.call_count, 2)
         listed = json.loads(model.call_args_list[1].args[0]["messages"][-1]["content"])
         self.assertEqual(listed["files"], ["main.py", "test_main.py"])
-        self.assertEqual(listed["scope"], "allowlisted_workspace_files")
+        self.assertEqual(listed["scope"], "visible_workspace_directory")
         reads = [json.loads(message["content"]) for message in model.call_args_list[2].args[0]["messages"][-2:]]
         self.assertEqual([result["content"] for result in reads], [code, test_content])
         self.assertTrue(all(result["ok"] for result in reads))
