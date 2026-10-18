@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import commands
+from . import checkpoints, commands
 from .permissions import resolve_python_path, resolve_workspace_path, resolve_write_path
 
 
@@ -105,7 +105,8 @@ def write_file(path: str, content: str) -> int:
     target = resolve_write_path(path)
     if not isinstance(content, str) or not content.strip():
         raise ValueError("写入内容必须是非空字符串。")
-    return target.write_text(content, encoding="utf-8")
+    updated = content.replace("\n", os.linesep).encode("utf-8")
+    return checkpoints.apply_change(target, updated, lambda: target.write_text(content, encoding="utf-8"))
 
 
 class EditConflict(Exception):
@@ -144,7 +145,7 @@ def apply_edit(path: str, original: bytes, updated: bytes) -> None:
     target = resolve_write_path(path)
     if target.read_bytes() != original:
         raise EditConflict("预览后文件已变化，未覆盖；请重新读取并准备编辑。")
-    target.write_bytes(updated)
+    checkpoints.apply_change(target, updated, lambda: target.write_bytes(updated))
 
 
 def run_python(path: str) -> subprocess.CompletedProcess[str]:
@@ -285,7 +286,7 @@ TOOL_ERRORS = (EditConflict, subprocess.TimeoutExpired, OSError, UnicodeError)
 
 
 def tool_error(tool: Tool, arguments: dict, error: Exception) -> dict:
-    if isinstance(error, EditConflict):
+    if isinstance(error, (EditConflict, checkpoints.CheckpointConflict)):
         message = str(error)
     elif isinstance(error, subprocess.TimeoutExpired):
         message = f"运行超过 {RUN_TIMEOUT} 秒，Python 子进程已终止。"
