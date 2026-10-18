@@ -137,25 +137,41 @@ def record_event(log_file: TextIO | None, event: str, **details) -> None:
 
 
 def load_history(path: str) -> list[dict]:
-    """Restore a completed conversation without replaying its tools or settings."""
+    """Restore completed or request-limited history without replaying tools."""
     try:
         entries = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
-        if entries[-1]["event"] != "run_end" or entries[-1]["reason"] != "stop":
-            raise ValueError("目前只支持恢复以 stop 正常结束的会话。")
+        if entries[-1]["event"] != "run_end" or entries[-1]["reason"] not in ("stop", "max_model_calls"):
+            raise ValueError("目前只支持恢复正常结束或因模型请求次数上限停止的会话。")
+        end_reason = entries[-1]["reason"]
         request = next(entry for entry in reversed(entries) if entry["event"] == "model_request")
         response = next(entry for entry in reversed(entries) if entry["event"] == "model_response")
         choice = response["response"]["choices"][0]
-        if request["step"] != response["step"] or choice["finish_reason"] != "stop":
-            raise ValueError("日志中的最后一次请求与正常回答不对应。")
+        expected_finish = "stop" if end_reason == "stop" else "tool_calls"
+        if request["step"] != response["step"] or choice["finish_reason"] != expected_finish:
+            raise ValueError("日志中的最后一次请求、回复与结束原因不对应。")
         messages = request["payload"]["messages"]
         if not isinstance(messages, list) or not messages or messages[0]["role"] != "system":
             raise ValueError("日志缺少完整的消息历史。")
         final = choice["message"]
         if not isinstance(final, dict):
             raise ValueError("日志中的最终回答格式无效。")
-        if final.get("tool_calls"):
-            raise ValueError("日志的最终回答仍包含未完成的工具请求。")
-        history = [*messages[1:], {"role": "assistant", "content": final.get("content") or ""}]
+        if end_reason == "stop":
+            if final.get("tool_calls"):
+                raise ValueError("日志的最终回答仍包含未完成的工具请求。")
+            history = [*messages[1:], {"role": "assistant", "content": final.get("content") or ""}]
+        else:
+            calls = final.get("tool_calls")
+            if not isinstance(calls, list) or not calls:
+                raise ValueError("达到请求次数上限的回复缺少工具请求。")
+            if any(entry["event"] == "tool_result" and entry["step"] == request["step"] for entry in entries):
+                raise ValueError("停止轮次已有工具执行结果，无法按未执行状态恢复。")
+            history = [*messages[1:], {"role": "assistant", "content": final.get("content"), "tool_calls": calls}]
+            for call in calls:
+                status = {
+                    "ok": False, "tool": call["function"]["name"], "source": "resume",
+                    "error": {"type": "NotExecuted", "message": "上次运行达到模型请求次数上限，该请求未执行；如仍需要，请重新提出工具调用。"},
+                }
+                history.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(status, ensure_ascii=False)})
         pending = set()
         for message in history:
             if not isinstance(message, dict):
@@ -323,7 +339,7 @@ def main() -> None:
     parser.add_argument("prompt", nargs="?", help="本次要完成的问题或任务")
     parser.add_argument("--preview", action="store_true", help="查看工具说明，不联网或读写练习文件")
     parser.add_argument("--auto-read", action="store_true", help="自动允许列出及读取白名单内的练习文件并发送结果；写入和运行仍需确认")
-    parser.add_argument("--resume", metavar="LOG", help="从正常结束的 JSONL 日志恢复历史；需同时提供新的问题或任务")
+    parser.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
     args = parser.parse_args()
     if args.resume and args.prompt is None:
         parser.error("使用 --resume 时，请同时提供新的问题或任务。")
@@ -344,7 +360,7 @@ def main() -> None:
             history = load_history(args.resume)
         except (OSError, ValueError) as error:
             raise SystemExit(f"无法恢复会话：{error}") from None
-        payload["messages"][0]["content"] += "恢复的历史工具结果描述过去的状态；用户要求验证当前文件时，应重新执行相应工具。"
+        payload["messages"][0]["content"] += "恢复的历史工具结果描述过去的状态；用户要求验证当前文件时，应重新执行相应工具。NotExecuted 是恢复时补充的未执行状态，不表示代码运行失败；若仍需该操作，请重新请求工具。"
         payload["messages"] = [payload["messages"][0], *history, payload["messages"][-1]]
     print("[第一次请求：消息与工具说明]")
     print(json.dumps(payload, ensure_ascii=False, indent=2))

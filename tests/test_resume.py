@@ -56,6 +56,19 @@ class ResumeTests(unittest.TestCase):
                             tool_call.main()
         return model, key, approval, output.getvalue()
 
+    def save_limit_log(self):
+        entries = copy.deepcopy(self.entries)
+        pending = {"role": "assistant", "content": "接下来验证运行结果。", "tool_calls": [
+            {"id": "call_pending_write", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "main.py", "content": "raise RuntimeError()\n"}),
+            }},
+            {"id": "call_pending_run", "type": "function", "function": {"name": "run_python", "arguments": '{"path":"main.py"}'}},
+        ]}
+        entries[2]["response"]["choices"][0] = {"finish_reason": "tool_calls", "message": pending}
+        entries[-1]["reason"] = "max_model_calls"
+        self.save_entries(entries)
+        return pending
+
     def test_loads_complete_history_including_last_assistant_answer(self):
         history = tool_call.load_history(str(self.source))
         self.assertEqual(history, [*self.old_messages[1:], self.old_final])
@@ -94,6 +107,52 @@ class ResumeTests(unittest.TestCase):
             operation.assert_not_called()
         self.assertEqual(list(self.logs.iterdir()), [self.source])
 
+    def test_limit_resume_preview_marks_pending_calls_as_not_executed(self):
+        pending = self.save_limit_log()
+        original = self.source.read_bytes()
+        with patch("tool_call.write_file") as writer, patch("tool_call.run_python") as runner:
+            model, key, approval, output = self.run_cli(["--preview", "--resume", str(self.source), "继续任务"], [])
+        payload, _ = json.JSONDecoder().raw_decode(output.split("\n", 1)[1])
+        self.assertEqual(payload["messages"][1:4], self.old_messages[1:])
+        self.assertEqual(payload["messages"][-4], pending)
+        statuses = payload["messages"][-3:-1]
+        self.assertEqual([message["tool_call_id"] for message in statuses], [call["id"] for call in pending["tool_calls"]])
+        for message in statuses:
+            result = json.loads(message["content"])
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["source"], "resume")
+            self.assertEqual(result["error"]["type"], "NotExecuted")
+            self.assertNotIn("exit_code", result)
+        for operation in (model, key, approval, writer, runner):
+            operation.assert_not_called()
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertEqual(list(self.logs.iterdir()), [self.source])
+
+    def test_limit_resume_only_executes_a_newly_requested_and_approved_tool(self):
+        self.save_limit_log()
+        original = self.source.read_bytes()
+        code = "print(5050)\n"
+        (self.root / "main.py").write_text(code, encoding="utf-8")
+        running = {"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [{
+            "id": "call_new_run", "type": "function", "function": {"name": "run_python", "arguments": '{"path":"main.py"}'},
+        }]}}]}
+        with patch.object(tool_call, "WORKSPACE", self.root), patch("tool_call.write_file") as writer:
+            with patch("tool_call.run_python", wraps=tool_call.run_python) as runner:
+                model, _, approval, _ = self.run_cli(["--resume", str(self.source), "重新运行 main.py"], [running, self.final])
+        self.assertEqual(model.call_count, 2)
+        approval.assert_called_once()
+        runner.assert_called_once_with("main.py")
+        writer.assert_not_called()
+        self.assertEqual((self.root / "main.py").read_text(encoding="utf-8"), code)
+        self.assertEqual(self.source.read_bytes(), original)
+        entries = [json.loads(line) for line in next(self.logs.glob("run-*.jsonl")).read_text(encoding="utf-8").splitlines()]
+        results = [entry for entry in entries if entry["event"] == "tool_result"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["tool_call_id"], "call_new_run")
+        self.assertTrue(results[0]["result"]["ok"])
+        self.assertEqual(results[0]["result"]["stdout"].strip(), "5050")
+        self.assertEqual(entries[-1]["reason"], "stop")
+
     def test_incomplete_or_malformed_history_is_rejected_before_credentials_or_api(self):
         cases = []
         for reason in ("user_denied", "max_model_calls", "abnormal_finish", "error", "cancelled"):
@@ -101,6 +160,15 @@ class ResumeTests(unittest.TestCase):
             entries[-1]["reason"] = reason
             cases.append(entries)
         cases.append(self.entries[:-1])
+        entries = copy.deepcopy(self.entries)
+        entries[-1]["reason"] = "max_model_calls"
+        entries[2]["response"]["choices"][0] = {"finish_reason": "tool_calls", "message": {"tool_calls": []}}
+        cases.append(copy.deepcopy(entries))
+        entries[2]["response"]["choices"][0]["message"]["tool_calls"] = [{
+            "id": "call_pending", "type": "function", "function": {"name": "run_python", "arguments": '{"path":"main.py"}'},
+        }]
+        entries.insert(-1, {"event": "tool_result", "step": 2, "tool_call_id": "call_pending", "result": {"ok": True}})
+        cases.append(entries)
         entries = copy.deepcopy(self.entries)
         entries[2]["step"] = 3
         cases.append(entries)
