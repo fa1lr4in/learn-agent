@@ -50,7 +50,7 @@ class WorkspaceTests(unittest.TestCase):
         paths = ["../outside.txt", "demo/../../outside.txt", str(self.root / "outside.txt"),
                  "C:relative.txt", "main.py:stream", ".env", "demo/.git/config", "", None, True, []]
         for path in paths:
-            for operation in (tool_call.read_file, tool_call.list_files):
+            for operation in (tool_call.read_file, tool_call.list_files, tool_call.resolve_write_path, tool_call.resolve_python_path):
                 with self.subTest(path=path, operation=operation.__name__), self.assertRaises(ValueError):
                     operation(path)
 
@@ -75,7 +75,13 @@ class WorkspaceTests(unittest.TestCase):
                 tool_call.read_file("external.py")
             with self.assertRaises(ValueError):
                 tool_call.list_files("external.py")
+            with self.assertRaises(ValueError):
+                tool_call.write_file("external.py", "overwritten")
+            with patch("tool_call.subprocess.run") as process, self.assertRaises(ValueError):
+                tool_call.run_python("external.py")
+            process.assert_not_called()
             self.assertEqual(tool_call.list_files(), ["demo/"])
+        self.assertEqual(outside.read_text(encoding="utf-8"), "outside content")
 
     def test_agent_browses_subdirectories_then_reads_sources(self):
         replies = [
@@ -135,6 +141,116 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertFalse(result["ok"])
                 self.assertEqual(result["path"], path)
                 self.assertEqual(result["error"]["type"], error_type)
+
+    def test_agent_modifies_imported_module_and_verifies_with_fixed_tests(self):
+        fixture = Path(tool_call.__file__).parent / "workspace" / "demo_project"
+        project = self.workspace / "demo_project"
+        initial_stats = ('def summarize(values):\n    count = len(values)\n    total = sum(values)\n'
+                         '    return {\n        "count": count,\n        "total": total,\n'
+                         '        "average": total / count if count else 0.0,\n    }\n')
+        files = {"main.py": self.sources["demo/main.py"], "src/stats.py": initial_stats,
+                 "test_stats.py": (fixture / "test_stats.py").read_text(encoding="utf-8")}
+        for name, content in files.items():
+            target = project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        original_tests = (project / "test_stats.py").read_bytes()
+        original_main = (project / "main.py").read_bytes()
+        original_stats = (project / "src/stats.py").read_text(encoding="utf-8")
+        fixed_stats = original_stats.replace(
+            '        "average": total / count if count else 0.0,',
+            '        "average": total / count if count else 0.0,\n'
+            '        "min": min(values) if count else None,\n'
+            '        "max": max(values) if count else None,',
+        )
+        replies = [
+            self.response([("call_source", "read_file", {"path": "demo_project/src/stats.py"}),
+                           ("call_test_source", "read_file", {"path": "demo_project/test_stats.py"})]),
+            self.response([("call_before", "run_python", {"path": "demo_project/test_stats.py"})]),
+            self.response([("call_fix", "write_file", {"path": "demo_project/src/stats.py", "content": fixed_stats})]),
+            self.response([("call_tests", "run_python", {"path": "demo_project/test_stats.py"}),
+                           ("call_main", "run_python", {"path": "demo_project/main.py"})]),
+            self.final,
+        ]
+        log_file = io.StringIO()
+        with patch("tool_call.call_model", side_effect=replies) as model:
+            with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
+                reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+        self.assertEqual(reason, "stop")
+        self.assertEqual(model.call_count, 5)
+        self.assertEqual(approval.call_count, 4)
+        self.assertIn("覆盖现有 demo_project/src/stats.py", approval.call_args_list[1].args[0])
+        history = model.call_args_list[-1].args[0]["messages"]
+        results = [json.loads(message["content"]) for message in history if message["role"] == "tool"]
+        self.assertEqual([result["ok"] for result in results], [True, True, False, True, True, True])
+        self.assertNotEqual(results[2]["exit_code"], 0)
+        self.assertIn("FAILED", results[2]["stderr"])
+        self.assertEqual(results[4]["exit_code"], 0)
+        self.assertIn("Ran 4 tests", results[4]["stderr"])
+        self.assertIn("OK", results[4]["stderr"])
+        self.assertEqual(results[5]["exit_code"], 0)
+        self.assertEqual(results[5]["stdout"].strip(), "{'count': 3, 'total': 60, 'average': 20.0, 'min': 12, 'max': 30}")
+        self.assertEqual(results[5]["stderr"], "")
+        self.assertEqual((project / "src/stats.py").read_text(encoding="utf-8"), fixed_stats)
+        self.assertEqual((project / "test_stats.py").read_bytes(), original_tests)
+        self.assertEqual((project / "main.py").read_bytes(), original_main)
+        self.assertFalse(list(project.rglob("__pycache__")))
+        entries = [json.loads(line) for line in log_file.getvalue().splitlines()]
+        self.assertEqual([entry["source"] for entry in entries if entry["event"] == "tool_approval"],
+                         ["auto_read", "auto_read", "user", "user", "user", "user"])
+        self.assertEqual([entry["result"] for entry in entries if entry["event"] == "tool_result"], results)
+
+    def test_nested_script_imports_project_module_and_reads_local_data(self):
+        tool_call.write_file("demo/input.txt", "项目本地资料")
+        tool_call.write_file("demo/main.py", 'from pathlib import Path\nfrom src.stats import summarize\n'
+                             'print(Path("input.txt").read_text(encoding="utf-8"))\nprint(summarize([12, 18, 30]))\n')
+        result = tool_call.run_python("demo/main.py")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), ["项目本地资料", "{'total': 60}"])
+        self.assertEqual(result.stderr, "")
+
+    def test_read_only_fixtures_cannot_be_overwritten_before_confirmation(self):
+        for path in (*tool_call.READ_ONLY_FILES, "demo_project/./test_stats.py"):
+            with self.subTest(path=path):
+                reply = self.response([("call_write", "write_file", {"path": path, "content": "skip tests"})])
+                with patch("tool_call.call_model", return_value=reply), patch("tool_call.write_file") as writer:
+                    with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
+                        tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+                writer.assert_not_called()
+                approval.assert_not_called()
+                with self.assertRaises(ValueError):
+                    tool_call.write_file(path, "skip tests")
+
+    def test_nested_write_and_run_still_require_confirmation(self):
+        original = (self.workspace / "demo/main.py").read_bytes()
+        for name, arguments in [("write_file", {"path": "demo/main.py", "content": "print(0)\n"}),
+                                ("run_python", {"path": "demo/main.py"})]:
+            with self.subTest(tool=name):
+                log_file = io.StringIO()
+                reply = self.response([("call_denied", name, arguments)])
+                with patch("tool_call.call_model", return_value=reply) as model, patch("tool_call.subprocess.run") as process:
+                    with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
+                        reason = tool_call.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
+                self.assertEqual(reason, "user_denied")
+                model.assert_called_once()
+                approval.assert_called_once()
+                process.assert_not_called()
+                self.assertEqual((self.workspace / "demo/main.py").read_bytes(), original)
+                decision = json.loads(log_file.getvalue().splitlines()[-1])
+                self.assertFalse(decision["approved"])
+                self.assertEqual(decision["source"], "user")
+
+    def test_missing_parent_is_reported_without_creating_directories(self):
+        reply = self.response([("call_missing", "write_file", {"path": "missing/main.py", "content": "print(1)\n"})])
+        with patch("tool_call.call_model", side_effect=[reply, self.final]) as model:
+            with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
+                reason = tool_call.run_agent(self.payload, "offline-placeholder", auto_read=True)
+        self.assertEqual(reason, "stop")
+        result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["type"], "FileNotFoundError")
+        self.assertEqual(result["path"], "missing/main.py")
+        self.assertFalse((self.workspace / "missing").exists())
 
 
 if __name__ == "__main__":
