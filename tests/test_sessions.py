@@ -313,6 +313,25 @@ class SessionTests(unittest.TestCase):
                 self.run_cli(arguments)
         self.assertFalse(self.logs.exists())
 
+    def test_empty_session_id_is_rejected_without_credentials_api_or_storage(self):
+        for session_id in ("", "   ", "\t"):
+            for preview in (False, True):
+                with self.subTest(session_id=repr(session_id), preview=preview):
+                    arguments = ["tool_call.py", "--workspace", str(self.project), "--session", session_id]
+                    if preview:
+                        arguments.append("--preview")
+                    arguments.append("根据历史回答")
+                    with patch.object(sys, "argv", arguments), patch("tool_call.get_api_key") as key:
+                        with patch("learn_agent.loop.call_model") as model:
+                            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
+                                with self.assertRaises(SystemExit) as stopped:
+                                    tool_call.main()
+                    self.assertEqual(stopped.exception.code, 2)
+                    self.assertIn("会话 ID 不能为空", error.getvalue())
+                    key.assert_not_called()
+                    model.assert_not_called()
+                    self.assertFalse(self.logs.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

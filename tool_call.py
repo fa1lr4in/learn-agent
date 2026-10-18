@@ -32,6 +32,8 @@ def main() -> None:
     restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
     parser.add_argument("--workspace", metavar="DIR", help="选择项目根目录；相对路径从当前终端目录解析，默认使用本项目的 workspace")
     args = parser.parse_args()
+    if args.session is not None and not args.session.strip():
+        parser.error("会话 ID 不能为空；请提供 --sessions 列表中的 ID。")
     if (args.diff or args.undo or args.sessions) and (args.prompt is not None or args.resume or args.session):
         parser.error("查看会话列表、检查或撤回时，不提供新任务或恢复参数。")
     if (args.resume or args.session) and args.prompt is None:
