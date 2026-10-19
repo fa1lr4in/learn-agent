@@ -16,6 +16,7 @@ END_STATES = {
     "error": "failed",
     "abnormal_finish": "failed",
     "user_denied": "cancelled",
+    "policy_denied": "cancelled",
     "cancelled": "cancelled",
     "max_model_calls": "paused",
     "max_total_tokens": "paused",

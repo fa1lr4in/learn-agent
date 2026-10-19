@@ -9,7 +9,7 @@ from .sessions import project_run
 from .tasks import replay_events
 
 
-RECOVERABLE_REASONS = ("cancelled", "user_denied", "error", "abnormal_finish", "max_total_tokens", "usage_unavailable", "context_limit")
+RECOVERABLE_REASONS = ("cancelled", "user_denied", "policy_denied", "error", "abnormal_finish", "max_total_tokens", "usage_unavailable", "context_limit")
 RECOVERY_LABELS = {"recorded": "已有结果", "not_executed": "确定未执行", "unknown": "结果未知，需核对"}
 
 

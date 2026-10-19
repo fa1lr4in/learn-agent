@@ -1,6 +1,7 @@
 """Workspace boundaries and per-call approval policy."""
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -69,8 +70,23 @@ def resolve_python_path(path: str) -> Path:
     return target
 
 
-def approve_tool(action: str, read_only: bool, auto_read: bool) -> tuple[bool, str]:
-    if auto_read and read_only:
+@dataclass(frozen=True)
+class PermissionPolicy:
+    """Use local launch options and trusted tool metadata, never model text."""
+    auto_read: bool = False
+    denied_tools: tuple[str, ...] = ()
+
+    def decide(self, name: str, read_only: bool) -> str:
+        if name in self.denied_tools:
+            return "deny"
+        return "allow" if self.auto_read and read_only else "ask"
+
+
+def approve_tool(action: str, decision: str) -> tuple[bool, str]:
+    if decision == "deny":
+        print(f"\n[权限策略] 拒绝工具 {action}：本次 --deny-tool 明确禁用；未准备或执行该工具。")
+        return False, "policy"
+    if decision == "allow":
         print(f"\n[权限策略] 自动允许{action}，结果将发送给 DeepSeek。")
         return True, "auto_read"
     answer = input(f"\n输入 y，允许{action}并把结果发送给 DeepSeek：")

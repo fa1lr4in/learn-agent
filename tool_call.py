@@ -39,6 +39,7 @@ def main() -> None:
     mode.add_argument("--sessions", action="store_true", help="列出本地 SQLite 会话，不调用模型")
     mode.add_argument("--status", metavar="LOG", help="从 JSONL 还原一次任务的状态变化，不调用模型或工具")
     parser.add_argument("--auto-read", action="store_true", help="自动允许浏览、搜索和读取 workspace 内的可访问文件并发送结果；写入、编辑和运行仍需确认")
+    parser.add_argument("--deny-tool", action="append", default=[], choices=[tool["function"]["name"] for tool in tool_schemas()], metavar="NAME", help="本次运行禁用指定工具，可重复指定；优先于 --auto-read，不读取文件中的授权声明")
     parser.add_argument("--stream", action="store_true", help="逐段显示模型文本；工具请求收齐并检查后才执行")
     parser.add_argument("--max-model-calls", type=positive_int, default=loop.MAX_MODEL_CALLS, metavar="N", help="本次任务最多请求模型的次数，默认 8；到限时不执行本轮工具")
     parser.add_argument("--max-total-tokens", type=positive_int, metavar="N", help="本次任务累计总 token 停止阈值；收到回复后检查，可能超出；缺少用量时暂停")
@@ -176,6 +177,7 @@ def run_cli(args: argparse.Namespace) -> None:
     preview_payload, context_report = select_context(payload, args.context_chars) if args.context_chars is not None else (payload, None)
     print(json.dumps(preview_payload, ensure_ascii=False, indent=2))
     budget_notice = f"[任务预算] 模型请求上限 {budget.max_model_calls} 次；总 token 停止阈值：{budget.max_total_tokens if budget.max_total_tokens is not None else '未设置'}"
+    permission_notice = f"[权限策略] 明确禁用：{', '.join(args.deny_tool) or '无'}；其余只读工具{'自动允许' if args.auto_read else '逐次询问'}，修改和执行逐次询问。"
     if args.resume:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
     elif args.session:
@@ -185,12 +187,14 @@ def run_cli(args: argparse.Namespace) -> None:
     if args.preview:
         print("\n预览结束，没有联网或执行工具，也未创建日志。")
         print(budget_notice)
+        print(permission_notice)
         if context_report is not None:
             print_context(context_report)
         if args.semantic_compact:
             print("[语义压缩预览] 不调用摘要模型；若有历史摘录，仅为规划占位，实际摘要需运行后生成并重新检查预算。")
         return
     print(budget_notice)
+    print(permission_notice)
     if args.semantic_compact:
         print("[语义压缩] 超限时将额外调用模型；上方旧历史摘录仅为规划占位，不会代替模型摘要发送。")
     try:
@@ -208,12 +212,12 @@ def run_cli(args: argparse.Namespace) -> None:
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, context_chars=args.context_chars, semantic_compact=args.semantic_compact, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1, **({"initial_messages": payload["messages"]} if args.semantic_compact else {}))
+                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, context_chars=args.context_chars, semantic_compact=args.semantic_compact, auto_read=args.auto_read, denied_tools=args.deny_tool, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1, **({"initial_messages": payload["messages"]} if args.semantic_compact else {}))
                 reason = "error"
                 end_details = {}
                 try:
                     with checkpoints.track_changes(log_path):
-                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget, context_chars=args.context_chars, semantic_compact=args.semantic_compact)
+                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget, context_chars=args.context_chars, semantic_compact=args.semantic_compact, denied_tools=tuple(args.deny_tool))
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                     reason = "cancelled" if isinstance(error, (KeyboardInterrupt, EOFError)) else "error"
                     end_details["error_type"] = type(error).__name__

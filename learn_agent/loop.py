@@ -9,19 +9,21 @@ from .compaction import generate_summary
 from .context import ContextLimitError, print_context, select_context
 from .events import EventRecorder, record_event
 from .model import call_model
-from .permissions import approve_tool
+from .permissions import PermissionPolicy, approve_tool
 
 
 MAX_MODEL_CALLS = 8
 
 
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
-              budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False) -> str:
+              budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False,
+              denied_tools: tuple[str, ...] = ()) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
     request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
     summary_cache = None
+    policy = PermissionPolicy(auto_read, denied_tools)
     for step in range(1, budget.max_model_calls + 1):
         api_request = request
         context_details = {}
@@ -136,14 +138,15 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
         ]
         for tool_call, name, tool, arguments in prepared_calls:
             try:
-                prepared = tool.prepare(arguments)
-                if not (auto_read and tool.read_only):
+                decision = policy.decide(name, tool.read_only)
+                prepared = None if decision == "deny" else tool.prepare(arguments)
+                if decision == "ask":
                     record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"])
-                approved, source = approve_tool(prepared.action, tool.read_only, auto_read)
-                record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source)
+                approved, source = approve_tool(prepared.action if prepared else name, decision)
+                record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source, decision=decision)
                 if not approved:
                     print("已停止：未执行被拒绝的工具及本轮后续工具，也不会继续请求模型；此前已完成的操作保留。")
-                    return "user_denied"
+                    return "policy_denied" if decision == "deny" else "user_denied"
 
                 record_event(log_file, "tool_started", step=step, tool=name, tool_call_id=tool_call["id"])
                 result = {"ok": True, "tool": name, **prepared.execute()}
