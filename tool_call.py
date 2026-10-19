@@ -11,6 +11,7 @@ from uuid import uuid4
 from learn_agent import checkpoints, loop, permissions
 from learn_agent.events import EventRecorder, load_history, record_event
 from learn_agent.model import get_api_key
+from learn_agent.recovery import RECOVERY_LABELS, load_recovery
 from learn_agent.sessions import SessionStore
 from learn_agent.tasks import STATE_LABELS, replay_events
 from learn_agent.tools import tool_schemas
@@ -32,14 +33,15 @@ def main() -> None:
     restore = parser.add_mutually_exclusive_group()
     restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
     restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
+    restore.add_argument("--recover", metavar="LOG", help="检查取消或异常日志后显式恢复；需要新任务，不重放旧工具")
     parser.add_argument("--workspace", metavar="DIR", help="选择项目根目录；相对路径从当前终端目录解析，默认使用本项目的 workspace")
     args = parser.parse_args()
     if args.session is not None and not args.session.strip():
         parser.error("会话 ID 不能为空；请提供 --sessions 列表中的 ID。")
-    if (args.diff or args.undo or args.sessions or args.status) and (args.prompt is not None or args.resume or args.session):
+    if (args.diff or args.undo or args.sessions or args.status) and (args.prompt is not None or args.resume or args.session or args.recover):
         parser.error("查看状态、会话列表、检查或撤回时，不提供新任务或恢复参数。")
-    if (args.resume or args.session) and args.prompt is None:
-        parser.error("使用 --resume 或 --session 时，请同时提供新的问题或任务。")
+    if (args.resume or args.session or args.recover) and args.prompt is None:
+        parser.error("使用 --resume、--session 或 --recover 时，请同时提供新的问题或任务。")
     try:
         with permissions.use_workspace(args.workspace):
             if args.sessions:
@@ -134,9 +136,18 @@ def run_cli(args: argparse.Namespace) -> None:
         "max_tokens": 2048,
     }
     payload["messages"][0]["content"] = workspace_instruction + payload["messages"][0]["content"]
-    if args.resume or args.session:
+    if args.resume or args.session or args.recover:
         try:
-            if args.session:
+            if args.recover:
+                recovery = load_recovery(args.recover, root)
+                print(f"[恢复检查] {Path(args.recover).resolve()}；上次结束：{recovery.reason}")
+                for tool in recovery.tools:
+                    print(f"第 {tool['step']} 轮 {tool['name']} ({tool['call_id']})：{RECOVERY_LABELS[tool['status']]}")
+                if recovery.note:
+                    print(recovery.note)
+                recovery.require_safe()
+                history = recovery.history
+            elif args.session:
                 saved_session, history = store.restore(args.session, root)
             else:
                 history = load_history(args.resume)
@@ -150,6 +161,8 @@ def run_cli(args: argparse.Namespace) -> None:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
     elif args.session:
         print(f"\n[恢复会话] 从 SQLite 会话 {args.session} 载入 {len(history)} 条历史消息。")
+    elif args.recover:
+        print(f"\n[异常恢复] 载入 {len(history)} 条历史消息；旧工具不重放，新操作按本次权限重新确认。")
     if args.preview:
         print("\n预览结束，没有联网或执行工具，也未创建日志。")
         return
@@ -166,12 +179,12 @@ def run_cli(args: argparse.Namespace) -> None:
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None)
+                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1)
                 try:
                     with checkpoints.track_changes(log_path):
                         reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read)
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
-                    reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
+                    reason = "cancelled" if isinstance(error, (KeyboardInterrupt, EOFError)) else "error"
                     record_event(events, "run_end", reason=reason, error_type=type(error).__name__)
                     raise
                 record_event(events, "run_end", reason=reason)
@@ -181,7 +194,9 @@ def run_cli(args: argparse.Namespace) -> None:
             except (ValueError, OSError, sqlite3.Error) as error:
                 raise SystemExit(f"会话保存失败：{error}\n本次 JSONL 日志保留于 {log_path}，请先核对，不要直接重复副作用操作。") from None
             print(f"[会话已保存] {session_id} -> {store.path}")
-    except (ValueError, OSError, EOFError, sqlite3.Error) as error:
+    except EOFError:
+        raise SystemExit("\n终端输入已关闭，已取消本次实验。") from None
+    except (ValueError, OSError, sqlite3.Error) as error:
         raise SystemExit(f"本次实验停止：{error}") from None
     except KeyboardInterrupt:
         raise SystemExit("\n已取消本次实验。") from None

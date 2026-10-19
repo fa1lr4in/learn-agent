@@ -51,7 +51,7 @@ class TaskStatus:
                 raise ValueError("任务未处于运行状态，不能开始模型请求或工具操作。")
             if event == "tool_waiting":
                 self.state = "waiting_approval"
-            elif event not in ("run_start", "model_request", "model_response", "tool_result"):
+            elif event not in ("run_start", "model_request", "model_response", "tool_started", "tool_result"):
                 raise ValueError(f"无法识别任务事件：{event}")
 
 

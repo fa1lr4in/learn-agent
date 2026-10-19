@@ -77,6 +77,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                     print("已停止：未执行被拒绝的工具及本轮后续工具，也不会继续请求模型；此前已完成的操作保留。")
                     return "user_denied"
 
+                record_event(log_file, "tool_started", step=step, tool=name, tool_call_id=tool_call["id"])
                 result = {"ok": True, "tool": name, **prepared.execute()}
             except tools.TOOL_ERRORS as error:
                 result = tools.tool_error(tool, arguments, error)
@@ -84,4 +85,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             print(json.dumps(result, ensure_ascii=False, indent=2))
             record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)})
+            if result.get("cleanup_succeeded") is False:
+                print("已停止：无法确认命令进程树已经清理；不执行后续工具或请求模型，请先核对现场。")
+                return "error"
         request = {**request, "messages": messages}
