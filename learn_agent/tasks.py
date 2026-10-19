@@ -18,6 +18,8 @@ END_STATES = {
     "user_denied": "cancelled",
     "cancelled": "cancelled",
     "max_model_calls": "paused",
+    "max_total_tokens": "paused",
+    "usage_unavailable": "paused",
 }
 
 

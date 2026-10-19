@@ -4,6 +4,7 @@ import json
 from typing import TextIO
 
 from . import tools
+from .budget import RunBudget
 from .events import EventRecorder, record_event
 from .model import call_model
 from .permissions import approve_tool
@@ -12,11 +13,13 @@ from .permissions import approve_tool
 MAX_MODEL_CALLS = 8
 
 
-def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False) -> str:
+def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
+              budget: RunBudget | None = None) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
+    budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
     request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
-    for step in range(1, MAX_MODEL_CALLS + 1):
+    for step in range(1, budget.max_model_calls + 1):
         if step > 1:
             if request.get("stream"):
                 print(f"\n[第 {step} 次请求：携带历史消息继续流式接收]")
@@ -24,6 +27,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                 print(f"\n[第 {step} 次请求里的消息历史]")
                 print(json.dumps(request["messages"], ensure_ascii=False, indent=2))
         record_event(log_file, "model_request", step=step, payload=request)
+        budget.model_calls += 1
         if request.get("stream"):
             print(f"\n[第 {step} 次模型回复：流式接收]", flush=True)
             tool_notice = False
@@ -44,6 +48,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
         else:
             response = call_model(request, api_key)
         record_event(log_file, "model_response", step=step, response=response)
+        budget.observe(response)
         choice = response["choices"][0]
         message = choice["message"]
         if not request.get("stream"):
@@ -67,8 +72,13 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             else:
                 print("本次任务未完成：模型请求异常结束，未执行本轮工具。")
             return "abnormal_finish"
-        if step == MAX_MODEL_CALLS:
-            print(f"已达到最多 {MAX_MODEL_CALLS} 次模型请求，任务未完成；未执行本轮工具。")
+        budget_reason = budget.pause_reason()
+        if budget_reason:
+            print("已达到总 token 停止阈值。" if budget_reason == "max_total_tokens" else "服务未提供有效的总 token 用量，无法继续核对预算。")
+            print("任务暂停：未执行本轮工具，不再请求模型；此前已完成的操作保留。")
+            return budget_reason
+        if step == budget.max_model_calls:
+            print(f"已达到最多 {budget.max_model_calls} 次模型请求，任务未完成；未执行本轮工具。")
             return "max_model_calls"
 
         calls = message.get("tool_calls") or []

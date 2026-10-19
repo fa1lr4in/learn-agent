@@ -38,8 +38,9 @@
 - 根据实际事件记录运行、等待确认、完成、失败、取消与暂停状态；支持 `--status LOG` 只读查看一次任务的状态变化，拒绝或结束后不启动后续操作。
 - 支持 `--recover LOG 新任务` 检查取消或异常任务后显式恢复；保留已有结果，未执行请求补为 `NotExecuted`，工具结果未知或进程清理未确认时拒绝恢复。
 - 支持 `--stream` 逐段显示模型文本，按工具 index 拼接参数；完整接收后再检查和确认工具，断流或中断时不执行半截请求。
+- 每次任务累计服务报告的输入、输出与总 token，记录模型请求数、完整回复数和包含确认等待的耗时；支持 `--max-model-calls` 与 `--max-total-tokens`，达到阈值后暂停后续操作，用量缺失时明确显示未知。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。当前共 241 项自动化测试通过。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课新增用量和预算控制已离线验证，当前共 258 项自动化测试通过；本课真实模型验证待进行。
 
 ## 代码结构与工具注册
 
@@ -50,6 +51,7 @@ learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
   streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
+  budget.py             本次任务用量、耗时与预算检查，未知用量不按零处理
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
   commands.py           前台命令、工作目录、时限、输出上限和进程清理
@@ -58,7 +60,7 @@ learn_agent/
   events.py             JSONL 记录、历史恢复和消息与工具对应检查
   sessions.py           Session / Message / ToolRun、SQLite 事务保存与按 ID 恢复
   tasks.py              TaskStatus、事件推导状态与只读回放
-  recovery.py           取消与异常恢复检查、已有结果保留和未执行状态补全
+  recovery.py           取消、异常与 token 预算暂停检查、已有结果保留和未执行状态补全
 tests/                  使用临时目录和模拟模型响应的自动化测试
 workspace/              Agent 可以操作的练习目录
 ```
@@ -331,16 +333,16 @@ python tool_call.py --workspace $project --auto-read "请两次都用 run_comman
 
 | 事件 | 记录内容 |
 |---|---|
-| `run_start` | 本次任务开始、工作目录、检查点路径、模型请求次数上限及读取授权策略 |
+| `run_start` | 本次任务开始、工作目录、检查点路径、模型请求次数与总 token 阈值及读取授权策略 |
 | `model_request` | 请求序号 `step` 和发送给模型的请求体 `payload` |
 | `model_delta` | 流式消息片段，包含文本或带 index 的工具名称、参数片段；不作为完整工具执行 |
 | `model_response` | 请求序号和完整回复；流式模式下为拼接后的统一格式，保留停止原因及服务提供的 token 用量 |
 | `tool_approval` | 工具名、调用 ID、是否获准执行及授权来源 |
 | `tool_started` | 授权后即将进入工具执行；有开始记录但无结果时，不能断定没有副作用 |
 | `tool_result` | 工具名、调用 ID 和实际执行结果 |
-| `run_end` | 结束原因；发生异常时包含异常类型 |
+| `run_end` | 结束原因、summary 中的本次任务用量和耗时；发生异常时包含异常类型 |
 
-`run_end.reason` 的取值包括 `stop`（模型正常结束）、`user_denied`（用户拒绝）、`max_model_calls`（达到请求上限）、`abnormal_finish`（模型异常结束）、`error`（请求或程序错误）、`cancelled`（用户中断）。异常记录只保存类型，不保存原始异常字符串。
+`run_end.reason` 的取值包括 `stop`（模型正常结束）、`user_denied`（用户拒绝）、`max_model_calls`（达到请求上限）、`max_total_tokens`（达到总 token 阈值且尚需继续）、`usage_unavailable`（设置 token 阈值但缺少有效总用量）、`abnormal_finish`（模型异常结束）、`error`（请求或程序错误）、`cancelled`（用户中断）。异常记录只保存类型，不保存原始异常字符串。
 
 日志记录问题、模型回复和工具读写内容，不记录 API Key 或 HTTP 请求头。`logs/` 已在 `.gitignore` 中排除，普通 Git 提交不会包含运行日志。默认不会加载旧日志；通过 `--resume` 明确选择日志时，才会将其中的历史带入新任务。
 
@@ -503,7 +505,7 @@ for run in tool_runs:
 | `completed` | 模型正常回答，本次循环以 `stop` 结束 |
 | `failed` | 请求或参数处理异常，或模型输出被截断等异常结束 |
 | `cancelled` | 用户拒绝工具，或通过 Ctrl+C 中断本次任务 |
-| `paused` | 达到模型请求次数上限，本次停止；仍可按原规则恢复历史 |
+| `paused` | 达到模型请求次数或总 token 阈值，或设置 token 阈值但无法获得总用量；按相应恢复规则继续 |
 
 `completed` 表示循环正常结束，业务需求是否满足仍要核对实际输出和验收测试。单个工具返回 `ok: false` 时，任务通常仍是 `running`，模型可以根据错误继续调整。
 
@@ -619,7 +621,56 @@ python -B -X utf8 tool_call.py --status $streamLog.FullName
 
 片段数量应大于 0，第一轮 `model_response` 在 `tool_waiting`、`tool_started` 之前。已有会话和恢复命令也可显式加 `--stream`；流式选项按当前命令决定，不从历史继承。基础 `chat.py` 入口保持原有方式。
 
-`model_delta` 只保存在 JSONL，不直接作为 SQLite 中的完整 Message 或 ToolRun。成功结束后只保存拼接好的完整消息。中途 Ctrl+C 会记录取消，断流、缺少结束信号或流格式错误会记录失败；部分文本或工具参数不会被当作完整回复执行。第 31 课的 `--recover` 可在已有明确结束记录、没有未知工具结果时继续使用；未完整接收的这一轮从最后一次完整请求历史恢复，不重放片段。服务返回的用量原样保留，尚不在本课新增预算统计。
+`model_delta` 只保存在 JSONL，不直接作为 SQLite 中的完整 Message 或 ToolRun。成功结束后只保存拼接好的完整消息。中途 Ctrl+C 会记录取消，断流、缺少结束信号或流格式错误会记录失败；部分文本或工具参数不会被当作完整回复执行。第 31 课的 `--recover` 可在已有明确结束记录、没有未知工具结果时继续使用；未完整接收的这一轮从最后一次完整请求历史恢复，不重放片段。服务返回的用量原样保留，第 33 课在完整回复基础上累计用量。
+
+## 用量与任务预算
+
+第 33 课为每次命令行任务增加用量统计与预算检查。先区分三种限制：请求体中的 `max_tokens: 2048` 限制一次回复的输出；`--max-model-calls N` 限制本次任务的模型请求次数，默认仍为 8；`--max-total-tokens N` 是本次任务累计输入与输出 token 的停止阈值，默认不设置。一个任务可以请求模型多次，流式片段数量不等于请求次数或 token 数。
+
+`prompt_tokens` 是本轮输入，包含系统指令、工具说明及实际携带的历史；`completion_tokens` 是本轮输出，`total_tokens` 是服务报告的本轮总量。各轮分别累计，不从历史总量中扣除重复内容，也不把缓存命中 token 再加一次。上一课的真实日志中两轮分别为输入 2362 / 输出 46 / 总量 2408，以及输入 2491 / 输出 112 / 总量 2603，本次任务总量为 5011，流式片段为 135 条。
+
+预算在完整回复收到后、工具准备和权限确认前检查。需要继续调用工具时，累计总量达到或超过阈值便暂停，状态为 `paused`，结束原因是 `max_total_tokens`；本轮工具不执行，已有操作保留。输入用量通常只能在回复后得知，最后一次请求可能使累计量超过阈值，因此这个阈值不能保证精确限制账单，也不会中途取消已经发出的请求或正在执行的工具。完整最终回答的 `stop` 仍记为 `completed`；回复被截断的 `length` 仍是失败，二者都会保存实际用量。
+
+先在 learn-agent 根目录运行同一个只执行入口的任务，验证正常用量统计。确认时输入 `y`：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$budgetTask = '请直接用 run_python 运行 main.py，不要先读取文件。根据真实输出简要报告统计结果。本次不创建或修改文件。'
+python -B -X utf8 tool_call.py --workspace .\workspace\demo_project --stream --max-model-calls 4 --max-total-tokens 20000 $budgetTask
+```
+
+预期入口输出为 `count: 3`、`total: 30`、`average: 10.0`、`min: 5`、`max: 15`，最后显示每轮用量和任务累计量，状态为 `completed`，结束原因为 `stop`。具体 token 与耗时取决于真实服务响应，不要求固定数值。耗时使用单调时钟，从本次运行日志准备开始至任务结束，包含模型、工具、检查点及等待确认，不包含读取密钥和最终 SQLite 保存。
+
+再将总 token 阈值设为 1，主动验证暂停。这一轮不需要输入 `y`，因为到达预算后不会出现工具确认：
+
+```powershell
+python -B -X utf8 tool_call.py --workspace .\workspace\demo_project --stream --max-model-calls 4 --max-total-tokens 1 $budgetTask
+$budgetLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+python -B -X utf8 tool_call.py --status $budgetLog.FullName
+$budgetEvents = @(Get-Content -LiteralPath $budgetLog.FullName -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+$budgetEnd = $budgetEvents | Where-Object { $_.event -eq 'run_end' } | Select-Object -Last 1
+$budgetEnd | Select-Object reason, task_state
+$budgetEnd.summary | ConvertTo-Json -Depth 5
+"本次工具结果数：$(@($budgetEvents | Where-Object { $_.event -eq 'tool_result' }).Count)"
+```
+
+服务正常返回总用量且模型按要求提出工具时，预期 `reason: max_total_tokens`、`task_state: paused`、`model_calls: 1`，工具结果数为 0。日志中的完整模型回复仍然保留。若服务没有报告有效的总 token，则结束原因为 `usage_unavailable`，同样不会执行工具；若模型未提出工具，最终 `stop` 只能证明本轮回答结束，不能证明运行验收成功。
+
+在同一终端保留 `$budgetLog`，先预览再以新的预算恢复，实际执行时仍需输入 `y`：
+
+```powershell
+$budgetContinue = '上次因预算暂停，工具没有执行。请重新请求 run_python 运行 main.py，依据本次实际输出简要报告结果；不要读取、创建或修改文件。'
+python -B -X utf8 tool_call.py --workspace .\workspace\demo_project --recover $budgetLog.FullName --preview --max-model-calls 4 --max-total-tokens 20000 $budgetContinue
+python -B -X utf8 tool_call.py --workspace .\workspace\demo_project --recover $budgetLog.FullName --stream --max-model-calls 4 --max-total-tokens 20000 $budgetContinue
+```
+
+恢复预览中应有 `NotExecuted`，旧工具不会重放，模型重新提出工具后才确认和执行。token 预算暂停使用 `--recover`；次数超限仍可使用原有 `--resume` 或 `--session`。每次命令的用量、耗时和预算重新开始，恢复历史本身不把旧任务消耗加进本次累计；这些历史在新请求中被再次发送时，仍计入本轮实际输入。
+
+`run_start` 保存两个限制，`run_end.summary` 保存 `model_calls`、`responses_received`、`elapsed_seconds` 和 `usage`。用量缺失、格式无效或请求中断时，对应累计字段为 `null`，终端显示“未知”，不是 0；`reported_usage` 与 `usage_reports` 保留已报告部分及覆盖的请求数量，不把部分统计当作任务总量。只缺少输入或输出明细、但有有效总量时，仍可检查总 token 阈值。不设置 token 阈值时，缺少用量不会阻止原有任务执行。
+
+本课不输出人民币费用估计。要估价，需先确定实际模型及版本、计价日期、币种、缓存命中与未命中的输入单价、输出单价和实际用量；总 token 直接乘单一价格不能代表真实账单。
 
 ## 会话恢复
 
@@ -717,7 +768,9 @@ python -m unittest discover -s tests -v
 
 第 31 课新增 `tests/test_recovery.py` 的 16 项测试，累计 224 项通过。覆盖确认前取消、EOF 取消、只读预览、重新授权后真实运行 Python、部分批次已有写入不重放、源日志与会话保留、超时及 HTTP/连接错误后的显式重试、读取权限不继承、丢弃截断回复、写入已发生但结果缺失时阻止恢复、旧日志的授权不确定性、清理失败立即停止、无结束记录、损坏与跨项目日志、孤立开始事件及互斥参数。模型和中断使用模拟；文件写入、Python 子进程和 SQLite 使用真实临时数据。取消、预览与重新授权后的真实模型流程已验证成功。
 
-第 32 课新增 `tests/test_streaming.py` 的 17 项测试，当前共 241 项通过。模拟 HTTP SSE 传输，覆盖中文与逐段即时显示、片段按工具 index 交错组装、CRLF 与多行 data、完整结束信号和用量保留、参数未收齐及缺少 DONE 时不执行、整批参数校验、输出截断、中途取消与 HTTP 断流、连接关闭、只读预览、恢复不重放片段、会话正常续聊与流式选项不继承。自动化测试在临时项目实际运行 Python，并使用真实 SQLite，不调用付费 API。真实模型任务已验证 135 条流式片段、完整回复后才确认并执行工具、正确统计结果、完整会话保存与 completed / stop。
+第 32 课新增 `tests/test_streaming.py` 的 17 项测试，累计 241 项通过。模拟 HTTP SSE 传输，覆盖中文与逐段即时显示、片段按工具 index 交错组装、CRLF 与多行 data、完整结束信号和用量保留、参数未收齐及缺少 DONE 时不执行、整批参数校验、输出截断、中途取消与 HTTP 断流、连接关闭、只读预览、恢复不重放片段、会话正常续聊与流式选项不继承。自动化测试在临时项目实际运行 Python，并使用真实 SQLite，不调用付费 API。真实模型任务已验证 135 条流式片段、完整回复后才确认并执行工具、正确统计结果、完整会话保存与 completed / stop。
+
+第 33 课新增 `tests/test_budget.py` 的 17 项测试，当前累计 258 项通过。覆盖逐轮累计与重复历史输入、缓存字段不重复相加、阈值相等与超出时阻止工具、保留前轮结果、显式请求次数限制、缺失与无效用量、部分明细、完整最终回答与截断的区别、异常与取消后的未知用量、拒绝、单调时钟与确认等待、预算暂停恢复预览及重新授权、续聊不继承预算、无效参数和流式片段不重复计数。README 的本课三组命令已在临时项目中使用 Windows PowerShell 5.1 验证，模型及 HTTP 回复模拟，Python 子进程与 SQLite 实际执行；没有调用付费 API。第 33 课真实模型的正常统计、预算暂停与恢复流程待使用者运行确认。
 
 ## 许可证
 

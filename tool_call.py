@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from learn_agent import checkpoints, loop, permissions
+from learn_agent.budget import RunBudget, print_summary
 from learn_agent.events import EventRecorder, load_history, record_event
 from learn_agent.model import get_api_key
 from learn_agent.recovery import RECOVERY_LABELS, load_recovery
@@ -18,6 +19,13 @@ from learn_agent.tools import tool_schemas
 
 
 LOG_DIR = Path(__file__).parent / "logs"
+
+
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("必须是正整数。")
+    return number
 
 
 def main() -> None:
@@ -31,10 +39,12 @@ def main() -> None:
     mode.add_argument("--status", metavar="LOG", help="从 JSONL 还原一次任务的状态变化，不调用模型或工具")
     parser.add_argument("--auto-read", action="store_true", help="自动允许浏览、搜索和读取 workspace 内的可访问文件并发送结果；写入、编辑和运行仍需确认")
     parser.add_argument("--stream", action="store_true", help="逐段显示模型文本；工具请求收齐并检查后才执行")
+    parser.add_argument("--max-model-calls", type=positive_int, default=loop.MAX_MODEL_CALLS, metavar="N", help="本次任务最多请求模型的次数，默认 8；到限时不执行本轮工具")
+    parser.add_argument("--max-total-tokens", type=positive_int, metavar="N", help="本次任务累计总 token 停止阈值；收到回复后检查，可能超出；缺少用量时暂停")
     restore = parser.add_mutually_exclusive_group()
     restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
     restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
-    restore.add_argument("--recover", metavar="LOG", help="检查取消或异常日志后显式恢复；需要新任务，不重放旧工具")
+    restore.add_argument("--recover", metavar="LOG", help="检查取消、异常或 token 预算暂停的日志后显式恢复；需要新任务，不重放旧工具")
     parser.add_argument("--workspace", metavar="DIR", help="选择项目根目录；相对路径从当前终端目录解析，默认使用本项目的 workspace")
     args = parser.parse_args()
     if args.session is not None and not args.session.strip():
@@ -112,6 +122,7 @@ def review_changes(log_path: str, undo: bool = False) -> None:
 
 def run_cli(args: argparse.Namespace) -> None:
     root = permissions.WORKSPACE.resolve()
+    budget = RunBudget(args.max_model_calls, args.max_total_tokens)
     store = SessionStore(LOG_DIR / "sessions.sqlite3")
     saved_session = None
     protected = permissions.read_only_paths()
@@ -158,6 +169,7 @@ def run_cli(args: argparse.Namespace) -> None:
         payload["messages"] = [payload["messages"][0], *history, payload["messages"][-1]]
     print(f"[第一次请求：消息与工具说明；工作目录：{root}]")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+    budget_notice = f"[任务预算] 模型请求上限 {budget.max_model_calls} 次；总 token 停止阈值：{budget.max_total_tokens if budget.max_total_tokens is not None else '未设置'}"
     if args.resume:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
     elif args.session:
@@ -166,10 +178,14 @@ def run_cli(args: argparse.Namespace) -> None:
         print(f"\n[异常恢复] 载入 {len(history)} 条历史消息；旧工具不重放，新操作按本次权限重新确认。")
     if args.preview:
         print("\n预览结束，没有联网或执行工具，也未创建日志。")
+        print(budget_notice)
         return
+    print(budget_notice)
     try:
         store.initialize()
         api_key = get_api_key()
+        # Time the run itself, including checkpoints, model calls and approval waits.
+        budget = RunBudget(args.max_model_calls, args.max_total_tokens)
         LOG_DIR.mkdir(exist_ok=True)
         log_path = LOG_DIR / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
         session_id = args.session or uuid4().hex
@@ -180,15 +196,20 @@ def run_cli(args: argparse.Namespace) -> None:
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1)
+                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1)
+                reason = "error"
+                end_details = {}
                 try:
                     with checkpoints.track_changes(log_path):
-                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read)
+                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget)
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                     reason = "cancelled" if isinstance(error, (KeyboardInterrupt, EOFError)) else "error"
-                    record_event(events, "run_end", reason=reason, error_type=type(error).__name__)
+                    end_details["error_type"] = type(error).__name__
                     raise
-                record_event(events, "run_end", reason=reason)
+                finally:
+                    summary = budget.summary()
+                    record_event(events, "run_end", reason=reason, summary=summary, **end_details)
+                    print_summary(summary)
         finally:
             try:
                 store.save_run(session_id, log_path, expected_log=saved_session.last_log if saved_session else None)

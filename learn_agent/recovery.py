@@ -9,7 +9,7 @@ from .sessions import project_run
 from .tasks import replay_events
 
 
-RECOVERABLE_REASONS = ("cancelled", "user_denied", "error", "abnormal_finish")
+RECOVERABLE_REASONS = ("cancelled", "user_denied", "error", "abnormal_finish", "max_total_tokens", "usage_unavailable")
 RECOVERY_LABELS = {"recorded": "已有结果", "not_executed": "确定未执行", "unknown": "结果未知，需核对"}
 
 
@@ -39,7 +39,7 @@ def load_recovery(path: str, workspace: Path) -> RecoveryPlan:
             raise ValueError("恢复日志的工作目录不匹配；请用 --workspace 指定原项目目录。")
         reason = status.reason if status.ended else "unfinished"
         if reason not in (*RECOVERABLE_REASONS, "unfinished"):
-            raise ValueError("正常结束或请求次数超限的任务请使用 --resume；--recover 用于取消和异常任务。")
+            raise ValueError("正常结束或请求次数超限的任务请使用 --resume；--recover 用于取消、异常和 token 预算暂停的任务。")
         request = next(entry for entry in reversed(entries) if entry["event"] == "model_request")
         messages = request["payload"]["messages"]
         if not messages or messages[0]["role"] != "system":
