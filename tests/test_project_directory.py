@@ -86,6 +86,41 @@ class ProjectDirectoryTests(unittest.TestCase):
         self.assertIn(str(self.default.resolve()), default_payload["messages"][0]["content"])
         self.assertIn("report.md", default_payload["messages"][-1]["content"])
 
+    def test_path_examples_are_relative_to_each_selected_root(self):
+        for root in (self.default, self.default / "demo_project", self.project):
+            with self.subTest(root=root):
+                key, model, approval, output = self.run_cli(["--workspace", str(root), "--preview", "运行根目录脚本"])
+                payload, _ = json.JSONDecoder().raw_decode(output.split("\n", 1)[1])
+                instruction = payload["messages"][0]["content"]
+                self.assertIn(str(root.resolve()), instruction)
+                self.assertIn('{"path": "main.py"}', instruction)
+                self.assertIn('{"path": "src/stats.py"}', instruction)
+                self.assertNotIn("例如 demo_project/", instruction)
+                self.assertNotIn("demo_project/", json.dumps(payload["tools"], ensure_ascii=False))
+                for operation in (key, model, approval):
+                    operation.assert_not_called()
+                self.assertFalse(self.logs.exists())
+
+    def test_run_python_from_selected_nested_project_keeps_exact_relative_path(self):
+        project = self.default / "demo_project"
+        (project / "main.py").write_text("print(5050)\n", encoding="utf-8")
+        replies = [
+            self.response([("wrong-prefix", "run_python", {"path": "demo_project/main.py"})]),
+            self.response([("correct-path", "run_python", {"path": "main.py"})]),
+            self.final,
+        ]
+        _, model, approval, _ = self.run_cli(["--workspace", str(project), "运行根目录 main.py"], replies)
+        entries = [json.loads(line) for line in next(self.logs.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+        results = [entry["result"] for entry in entries if entry["event"] == "tool_result"]
+        self.assertEqual(results[0]["path"], "demo_project/main.py")
+        self.assertFalse(results[0]["ok"])
+        self.assertEqual(results[0]["error"]["type"], "FileNotFoundError")
+        self.assertTrue(results[1]["ok"])
+        self.assertEqual(results[1]["path"], "main.py")
+        self.assertEqual(results[1]["stdout"], "5050\n")
+        self.assertEqual((model.call_count, approval.call_count), (3, 2))
+        self.assertEqual((entries[-1]["reason"], entries[-1]["task_state"]), ("stop", "completed"))
+
     def test_invalid_root_stops_before_credentials_network_or_log_creation(self):
         for selected in ("", str(self.root / "missing"), str(self.project / "main.py")):
             with self.subTest(selected=selected), patch.object(sys, "argv", ["tool_call.py", "--workspace", selected]):

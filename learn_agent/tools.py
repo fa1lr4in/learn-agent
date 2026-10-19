@@ -304,7 +304,7 @@ register_tool(Tool(
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "读取 workspace 内普通 UTF-8 文件的完整内容。path 必须是相对 workspace 的路径，例如 demo_project/src/stats.py；不读取点号开头的文件或目录。",
+            "description": "读取 workspace 内普通 UTF-8 文件的完整内容。path 相对当前 workspace：根目录文件用 main.py，src 子目录文件用 src/stats.py；不要自动添加根目录名称作为前缀。不读取点号开头的文件或目录。",
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "相对 workspace 的文件路径"}},
@@ -371,7 +371,7 @@ register_tool(Tool(
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "相对 workspace 的文件路径，例如 demo_project/src/stats.py"},
+                    "path": {"type": "string", "description": "相对当前 workspace 的文件路径，例如 src/stats.py 表示根目录下 src 子目录中的文件"},
                     "content": {"type": "string", "description": "完整的文件内容"},
                 },
                 "required": ["path", "content"],
@@ -417,7 +417,7 @@ register_tool(Tool(
             "description": "经用户确认后运行 workspace 内的普通 .py 文件，以脚本所在目录为工作目录，支持导入同项目模块；返回退出码、标准输出和标准错误，最长运行 10 秒。",
             "parameters": {
                 "type": "object",
-                "properties": {"path": {"type": "string", "description": "相对 workspace 的 .py 文件路径，例如 demo_project/main.py"}},
+                "properties": {"path": {"type": "string", "description": "相对当前 workspace 的 .py 文件路径；根目录的脚本用 main.py，src 子目录的脚本用 src/main.py，不要自动添加根目录名称作为前缀"}},
                 "required": ["path"],
                 "additionalProperties": False,
             },
