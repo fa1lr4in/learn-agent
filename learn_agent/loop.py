@@ -18,20 +18,48 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
     request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
     for step in range(1, MAX_MODEL_CALLS + 1):
         if step > 1:
-            print(f"\n[第 {step} 次请求里的消息历史]")
-            print(json.dumps(request["messages"], ensure_ascii=False, indent=2))
+            if request.get("stream"):
+                print(f"\n[第 {step} 次请求：携带历史消息继续流式接收]")
+            else:
+                print(f"\n[第 {step} 次请求里的消息历史]")
+                print(json.dumps(request["messages"], ensure_ascii=False, indent=2))
         record_event(log_file, "model_request", step=step, payload=request)
-        response = call_model(request, api_key)
+        if request.get("stream"):
+            print(f"\n[第 {step} 次模型回复：流式接收]", flush=True)
+            tool_notice = False
+
+            def show_delta(delta):
+                nonlocal tool_notice
+                record_event(log_file, "model_delta", step=step, delta=delta)
+                if delta.get("content"):
+                    print(delta["content"], end="", flush=True)
+                if delta.get("tool_calls") and not tool_notice:
+                    print("\n[工具请求接收中，参数收齐并检查后才会执行]", flush=True)
+                    tool_notice = True
+
+            try:
+                response = call_model(request, api_key, on_delta=show_delta)
+            finally:
+                print(flush=True)
+        else:
+            response = call_model(request, api_key)
         record_event(log_file, "model_response", step=step, response=response)
         choice = response["choices"][0]
         message = choice["message"]
-        print(f"\n[第 {step} 次模型回复]")
-        print(json.dumps(message, ensure_ascii=False, indent=2))
+        if not request.get("stream"):
+            print(f"\n[第 {step} 次模型回复]")
+            print(json.dumps(message, ensure_ascii=False, indent=2))
+        elif message.get("tool_calls"):
+            print("[完整工具请求]")
+            print(json.dumps(message["tool_calls"], ensure_ascii=False, indent=2))
         finish_reason = choice["finish_reason"]
         print(f"停止原因：{finish_reason}")
         if finish_reason == "stop":
-            print("\n[助手最终回答]")
-            print(message.get("content") or "（本次没有返回文本回答）")
+            if request.get("stream"):
+                print("\n[助手最终回答已接收完整]" if message.get("content") else "\n（本次没有返回文本回答）")
+            else:
+                print("\n[助手最终回答]")
+                print(message.get("content") or "（本次没有返回文本回答）")
             return "stop"
         if finish_reason != "tool_calls":
             if finish_reason == "length":

@@ -37,8 +37,9 @@
 - 任务结束后将 `Session`、`Message` 和 `ToolRun` 用一个事务保存到本地 SQLite；支持 `--sessions` 列出会话、`--session ID 新任务` 继续同一个会话，预览不写数据库，历史工具不自动重放。
 - 根据实际事件记录运行、等待确认、完成、失败、取消与暂停状态；支持 `--status LOG` 只读查看一次任务的状态变化，拒绝或结束后不启动后续操作。
 - 支持 `--recover LOG 新任务` 检查取消或异常任务后显式恢复；保留已有结果，未执行请求补为 `NotExecuted`，工具结果未知或进程清理未确认时拒绝恢复。
+- 支持 `--stream` 逐段显示模型文本，按工具 index 拼接参数；完整接收后再检查和确认工具，断流或中断时不执行半截请求。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课取消与异常恢复已实现，当前共 224 项自动化测试通过，真实模型验收待完成。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课流式输出已实现，当前共 241 项自动化测试通过，真实模型验收待完成。
 
 ## 代码结构与工具注册
 
@@ -48,6 +49,7 @@ tool_call.py            Agent 命令行入口：参数、请求配置、日志�
 learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
+  streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
   commands.py           前台命令、工作目录、时限、输出上限和进程清理
@@ -331,7 +333,8 @@ python tool_call.py --workspace $project --auto-read "请两次都用 run_comman
 |---|---|
 | `run_start` | 本次任务开始、工作目录、检查点路径、模型请求次数上限及读取授权策略 |
 | `model_request` | 请求序号 `step` 和发送给模型的请求体 `payload` |
-| `model_response` | 请求序号和服务返回的完整 JSON，包含停止原因及服务提供的 token 用量 |
+| `model_delta` | 流式消息片段，包含文本或带 index 的工具名称、参数片段；不作为完整工具执行 |
+| `model_response` | 请求序号和完整回复；流式模式下为拼接后的统一格式，保留停止原因及服务提供的 token 用量 |
 | `tool_approval` | 工具名、调用 ID、是否获准执行及授权来源 |
 | `tool_started` | 授权后即将进入工具执行；有开始记录但无结果时，不能断定没有副作用 |
 | `tool_result` | 工具名、调用 ID 和实际执行结果 |
@@ -575,6 +578,49 @@ python -B -X utf8 tool_call.py --status $recoveredLog.FullName
 
 本课支持取消、拒绝、请求异常和模型异常结束的日志。没有完整模型回复时，保留最后一次请求的已有历史；截断或异常回复不作为完整回答或可执行请求恢复。缺少 `run_end` 时无法确认原进程已停止，拒绝直接恢复；损坏的 JSON、跨项目、无效工具参数或相互矛盾的事件也拒绝处理。普通正常结束与次数超限仍用 `--resume` 或 `--session`；`--session` 不直接放开取消或异常会话。对结果未知的工具，本课只提供检查和阻止，不自动判断副作用是否已经完成。
 
+## 模型流式输出
+
+第 32 课增加 `--stream`，原有命令默认仍为非流式。传输格式按照 [DeepSeek Chat Completions 官方文档](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/)：SSE 事件中的 `delta` 携带新增片段，最后以 `[DONE]` 标记流结束。
+
+文本片段到达后立即显示并刷新终端。工具请求则按 `index` 分别拼接名称与参数字符串；参数中的 JSON 尚未收齐时不解析或执行。收到结束原因及 `[DONE]` 后，组装为原有 `choices → message` 回复格式，再由循环校验整批工具名称、调用 ID 和 JSON 参数，之后才申请权限。完整 JSON 已到达但缺少流结束标记时也不会执行工具。
+
+流式任务不再重复打印本轮完整正文；提出工具时先显示“工具请求接收中”，完整接收后展示“完整工具请求”。后续请求的完整历史仍保存在日志中，终端只显示继续请求提示。
+
+先在 learn-agent 根目录观察纯文本流式回答，不调用工具：
+
+```powershell
+python -B -X utf8 tool_call.py --stream "请用约300字、分三段解释 Agent 如何根据工具结果继续工作。不要调用工具。"
+```
+
+预期在“第 1 次模型回复：流式接收”后逐段出现正文，最后显示 `stop`、“助手最终回答已接收完整”和 `completed`。本课没有添加人为延迟；模型和网络很快时，肉眼可能不明显，仍可从日志中的多个 `model_delta` 核对实际片段。
+
+再验证带工具的流式任务。模型重新请求运行 `main.py` 后，确认时输入 **y**：
+
+```powershell
+$project = (Resolve-Path -LiteralPath .\workspace\demo_project).Path
+$task = "请只调用 run_python，path 参数必须是 main.py，表示当前 workspace 根目录下的脚本。不要添加 demo_project/ 前缀。不要读取、创建或修改文件；根据真实运行结果简要回答。"
+python -B -X utf8 tool_call.py --workspace $project --stream $task
+```
+
+预期先出现工具接收提示，再显示参数 `main.py` 的完整工具请求，之后进入 `waiting_approval`。允许后只运行一次脚本，`ok: true`、退出码 0，输出总和 30、平均值 10.0、最小值 5、最大值 15。第二次模型请求逐段显示总结，停止原因及 `run_end.reason` 均为 `stop`，最终状态 `completed`。
+
+结束后读取本次日志，检查片段与执行的先后关系：
+
+```powershell
+$streamLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+$streamEvents = @(Get-Content -LiteralPath $streamLog.FullName -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+"model_delta 数量：$(@($streamEvents | Where-Object { $_.event -eq 'model_delta' }).Count)"
+$streamEvents | Where-Object { $_.event -in @('model_response', 'tool_waiting', 'tool_started', 'run_end') } |
+    Select-Object event, step, task_state
+python -B -X utf8 tool_call.py --status $streamLog.FullName
+```
+
+片段数量应大于 0，第一轮 `model_response` 在 `tool_waiting`、`tool_started` 之前。已有会话和恢复命令也可显式加 `--stream`；流式选项按当前命令决定，不从历史继承。基础 `chat.py` 入口保持原有方式。
+
+`model_delta` 只保存在 JSONL，不直接作为 SQLite 中的完整 Message 或 ToolRun。成功结束后只保存拼接好的完整消息。中途 Ctrl+C 会记录取消，断流、缺少结束信号或流格式错误会记录失败；部分文本或工具参数不会被当作完整回复执行。第 31 课的 `--recover` 可在已有明确结束记录、没有未知工具结果时继续使用；未完整接收的这一轮从最后一次完整请求历史恢复，不重放片段。服务返回的用量原样保留，尚不在本课新增预算统计。
+
 ## 会话恢复
 
 `--resume` 接受以 `run_end.reason: stop` 正常结束，或以 `max_model_calls` 达到请求次数上限而停止的 JSONL 日志，同时必须提供新的问题或任务。以下示例适用于最近一次运行正常结束的情况：
@@ -669,7 +715,9 @@ python -m unittest discover -s tests -v
 
 第 30 课验证中修正了系统指令及 read_file、write_file、run_python 说明中固定的 demo_project/ 示例。现在明确区分根目录脚本 main.py 与 src 子目录文件 src/stats.py，不随项目根目录名称自动添加前缀。新增 2 项回归测试，覆盖默认根目录、选定子项目和其他项目的预览，以及真实 Python 执行：错误的重复前缀返回 FileNotFoundError，改用 main.py 后输出 5050；不通过自动删前缀掩盖错误。累计 208 项测试通过。
 
-第 31 课新增 `tests/test_recovery.py` 的 16 项测试，当前共 224 项通过。覆盖确认前取消、EOF 取消、只读预览、重新授权后真实运行 Python、部分批次已有写入不重放、源日志与会话保留、超时及 HTTP/连接错误后的显式重试、读取权限不继承、丢弃截断回复、写入已发生但结果缺失时阻止恢复、旧日志的授权不确定性、清理失败立即停止、无结束记录、损坏与跨项目日志、孤立开始事件及互斥参数。模型和中断使用模拟；文件写入、Python 子进程和 SQLite 使用真实临时数据，真实模型验收待完成。
+第 31 课新增 `tests/test_recovery.py` 的 16 项测试，累计 224 项通过。覆盖确认前取消、EOF 取消、只读预览、重新授权后真实运行 Python、部分批次已有写入不重放、源日志与会话保留、超时及 HTTP/连接错误后的显式重试、读取权限不继承、丢弃截断回复、写入已发生但结果缺失时阻止恢复、旧日志的授权不确定性、清理失败立即停止、无结束记录、损坏与跨项目日志、孤立开始事件及互斥参数。模型和中断使用模拟；文件写入、Python 子进程和 SQLite 使用真实临时数据。取消、预览与重新授权后的真实模型流程已验证成功。
+
+第 32 课新增 `tests/test_streaming.py` 的 17 项测试，当前共 241 项通过。模拟 HTTP SSE 传输，覆盖中文与逐段即时显示、片段按工具 index 交错组装、CRLF 与多行 data、完整结束信号和用量保留、参数未收齐及缺少 DONE 时不执行、整批参数校验、输出截断、中途取消与 HTTP 断流、连接关闭、只读预览、恢复不重放片段、会话正常续聊与流式选项不继承。测试在临时项目实际运行 Python，并使用真实 SQLite；不调用付费 API，真实模型验收待完成。
 
 ## 许可证
 

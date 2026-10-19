@@ -1,12 +1,16 @@
 """DeepSeek HTTP requests and local API-key lookup."""
 
 import getpass
+import http.client
 import json
 import os
 import urllib.request
+from collections.abc import Callable
+
+from .streaming import read_stream
 
 
-def call_model(payload: dict, api_key: str) -> dict:
+def call_model(payload: dict, api_key: str, on_delta: Callable[[dict], None] | None = None) -> dict:
     """Send JSON to the model service and decode the JSON response."""
     request = urllib.request.Request(
         "https://api.deepseek.com/chat/completions",
@@ -18,6 +22,11 @@ def call_model(payload: dict, api_key: str) -> dict:
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=60) as response:
+        if payload.get("stream"):
+            try:
+                return read_stream(response, on_delta)
+            except http.client.HTTPException:
+                raise OSError("模型流式连接中断，未收到完整回复；未执行本轮工具。") from None
         return json.load(response)
 
 

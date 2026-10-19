@@ -30,6 +30,7 @@ def main() -> None:
     mode.add_argument("--sessions", action="store_true", help="列出本地 SQLite 会话，不调用模型")
     mode.add_argument("--status", metavar="LOG", help="从 JSONL 还原一次任务的状态变化，不调用模型或工具")
     parser.add_argument("--auto-read", action="store_true", help="自动允许浏览、搜索和读取 workspace 内的可访问文件并发送结果；写入、编辑和运行仍需确认")
+    parser.add_argument("--stream", action="store_true", help="逐段显示模型文本；工具请求收齐并检查后才执行")
     restore = parser.add_mutually_exclusive_group()
     restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
     restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
@@ -131,7 +132,7 @@ def run_cli(args: argparse.Namespace) -> None:
         ],
         "tools": tool_schemas(),
         "tool_choice": "auto",
-        "stream": False,
+        "stream": args.stream,
         "thinking": {"type": "disabled"},
         "max_tokens": 2048,
     }
