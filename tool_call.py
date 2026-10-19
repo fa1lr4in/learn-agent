@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from learn_agent import checkpoints, loop, permissions
 from learn_agent.budget import RunBudget, print_summary
+from learn_agent.context import print_context, select_context
 from learn_agent.events import EventRecorder, load_history, record_event
 from learn_agent.model import get_api_key
 from learn_agent.recovery import RECOVERY_LABELS, load_recovery
@@ -41,12 +42,16 @@ def main() -> None:
     parser.add_argument("--stream", action="store_true", help="逐段显示模型文本；工具请求收齐并检查后才执行")
     parser.add_argument("--max-model-calls", type=positive_int, default=loop.MAX_MODEL_CALLS, metavar="N", help="本次任务最多请求模型的次数，默认 8；到限时不执行本轮工具")
     parser.add_argument("--max-total-tokens", type=positive_int, metavar="N", help="本次任务累计总 token 停止阈值；收到回复后检查，可能超出；缺少用量时暂停")
+    parser.add_argument("--context-chars", type=positive_int, metavar="N", help="限制发送的消息与工具说明的 JSON 字符数；缩短长结果、摘录旧历史，默认不启用")
+    parser.add_argument("--semantic-compact", action="store_true", help="配合 --context-chars：必要时额外调用模型生成语义摘要，共用任务预算")
     restore = parser.add_mutually_exclusive_group()
     restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
     restore.add_argument("--session", metavar="ID", help="按 ID 继续 SQLite 中的同一会话；需提供新任务")
     restore.add_argument("--recover", metavar="LOG", help="检查取消、异常或 token 预算暂停的日志后显式恢复；需要新任务，不重放旧工具")
     parser.add_argument("--workspace", metavar="DIR", help="选择项目根目录；相对路径从当前终端目录解析，默认使用本项目的 workspace")
     args = parser.parse_args()
+    if args.semantic_compact and args.context_chars is None:
+        parser.error("--semantic-compact 必须同时指定 --context-chars。")
     if args.session is not None and not args.session.strip():
         parser.error("会话 ID 不能为空；请提供 --sessions 列表中的 ID。")
     if (args.diff or args.undo or args.sessions or args.status) and (args.prompt is not None or args.resume or args.session or args.recover):
@@ -168,7 +173,8 @@ def run_cli(args: argparse.Namespace) -> None:
         payload["messages"][0]["content"] += "恢复的历史工具结果描述过去的状态；用户要求验证当前文件时，应重新执行相应工具。NotExecuted 是恢复时补充的未执行状态，不表示代码运行失败；若仍需该操作，请重新请求工具。"
         payload["messages"] = [payload["messages"][0], *history, payload["messages"][-1]]
     print(f"[第一次请求：消息与工具说明；工作目录：{root}]")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    preview_payload, context_report = select_context(payload, args.context_chars) if args.context_chars is not None else (payload, None)
+    print(json.dumps(preview_payload, ensure_ascii=False, indent=2))
     budget_notice = f"[任务预算] 模型请求上限 {budget.max_model_calls} 次；总 token 停止阈值：{budget.max_total_tokens if budget.max_total_tokens is not None else '未设置'}"
     if args.resume:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
@@ -179,8 +185,14 @@ def run_cli(args: argparse.Namespace) -> None:
     if args.preview:
         print("\n预览结束，没有联网或执行工具，也未创建日志。")
         print(budget_notice)
+        if context_report is not None:
+            print_context(context_report)
+        if args.semantic_compact:
+            print("[语义压缩预览] 不调用摘要模型；若有历史摘录，仅为规划占位，实际摘要需运行后生成并重新检查预算。")
         return
     print(budget_notice)
+    if args.semantic_compact:
+        print("[语义压缩] 超限时将额外调用模型；上方旧历史摘录仅为规划占位，不会代替模型摘要发送。")
     try:
         store.initialize()
         api_key = get_api_key()
@@ -196,12 +208,12 @@ def run_cli(args: argparse.Namespace) -> None:
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1)
+                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, context_chars=args.context_chars, semantic_compact=args.semantic_compact, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1, **({"initial_messages": payload["messages"]} if args.semantic_compact else {}))
                 reason = "error"
                 end_details = {}
                 try:
                     with checkpoints.track_changes(log_path):
-                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget)
+                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget, context_chars=args.context_chars, semantic_compact=args.semantic_compact)
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                     reason = "cancelled" if isinstance(error, (KeyboardInterrupt, EOFError)) else "error"
                     end_details["error_type"] = type(error).__name__

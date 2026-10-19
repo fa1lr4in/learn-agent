@@ -39,8 +39,10 @@
 - 支持 `--recover LOG 新任务` 检查取消或异常任务后显式恢复；保留已有结果，未执行请求补为 `NotExecuted`，工具结果未知或进程清理未确认时拒绝恢复。
 - 支持 `--stream` 逐段显示模型文本，按工具 index 拼接参数；完整接收后再检查和确认工具，断流或中断时不执行半截请求。
 - 每次任务累计服务报告的输入、输出与总 token，记录模型请求数、完整回复数和包含确认等待的耗时；支持 `--max-model-calls` 与 `--max-total-tokens`，达到阈值后暂停后续操作，用量缺失时明确显示未知。
+- 支持 `--context-chars` 选择本轮发送的上下文：保留系统指令、全部用户要求与最近一组完整工具记录，缩短长工具结果，以带来源编号的历史摘录替代较早记录；完整原文继续保存，必要内容放不下时暂停。
+- 支持 `--semantic-compact`：裁剪后仍超限时调用 DeepSeek 生成结构化语义摘要，同次运行复用并按需合并新记录；摘要请求与任务请求共用次数和 token 预算，摘要失败或超限时明确停止。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课新增用量和预算控制已离线验证，当前共 258 项自动化测试通过；本课真实模型验证待进行。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课上下文选择与模型语义摘要已离线验证，当前共 296 项自动化测试通过，真实摘要质量、用量统计与预算暂停待验证。
 
 ## 代码结构与工具注册
 
@@ -52,6 +54,8 @@ learn_agent/
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
   streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
   budget.py             本次任务用量、耗时与预算检查，未知用量不按零处理
+  context.py            上下文字符预算、长工具结果投影、成组历史选择与可追溯摘录
+  compaction.py         模型语义摘要请求、结构校验、来源记录与同运行摘要合并
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
   commands.py           前台命令、工作目录、时限、输出上限和进程清理
@@ -333,8 +337,11 @@ python tool_call.py --workspace $project --auto-read "请两次都用 run_comman
 
 | 事件 | 记录内容 |
 |---|---|
-| `run_start` | 本次任务开始、工作目录、检查点路径、模型请求次数与总 token 阈值及读取授权策略 |
-| `model_request` | 请求序号 `step` 和发送给模型的请求体 `payload` |
+| `run_start` | 本次任务开始、工作目录、检查点路径、模型请求次数、总 token 阈值、上下文字符上限及读取授权策略 |
+| `context_selected` | 启用上下文选择时的原始与发送字符数、来源消息编号、长结果缩短及历史摘录；blocked 表示必要内容仍超限，本轮未请求模型 |
+| `compaction_start/request/response/end` | 语义摘要的开始、实际请求与来源原文、完整回复及校验结果；与任务回复分开保存，不生成业务 Message / ToolRun |
+| `budget_paused` | 摘要用完最后一次请求额度后的完整消息快照；恢复时保留已执行结果，不虚构为 NotExecuted |
+| `model_request` | 请求序号 `step` 和实际发送的请求体 `payload`；启用上下文选择时另存完整 `full_messages` |
 | `model_delta` | 流式消息片段，包含文本或带 index 的工具名称、参数片段；不作为完整工具执行 |
 | `model_response` | 请求序号和完整回复；流式模式下为拼接后的统一格式，保留停止原因及服务提供的 token 用量 |
 | `tool_approval` | 工具名、调用 ID、是否获准执行及授权来源 |
@@ -342,7 +349,7 @@ python tool_call.py --workspace $project --auto-read "请两次都用 run_comman
 | `tool_result` | 工具名、调用 ID 和实际执行结果 |
 | `run_end` | 结束原因、summary 中的本次任务用量和耗时；发生异常时包含异常类型 |
 
-`run_end.reason` 的取值包括 `stop`（模型正常结束）、`user_denied`（用户拒绝）、`max_model_calls`（达到请求上限）、`max_total_tokens`（达到总 token 阈值且尚需继续）、`usage_unavailable`（设置 token 阈值但缺少有效总用量）、`abnormal_finish`（模型异常结束）、`error`（请求或程序错误）、`cancelled`（用户中断）。异常记录只保存类型，不保存原始异常字符串。
+`run_end.reason` 的取值包括 `stop`（模型正常结束）、`user_denied`（用户拒绝）、`max_model_calls`（达到请求上限）、`max_total_tokens`（达到总 token 阈值且尚需继续）、`usage_unavailable`（设置 token 阈值但缺少有效总用量）、`context_limit`（必要上下文仍超过字符上限）、`abnormal_finish`（模型异常结束）、`error`（请求或程序错误）、`cancelled`（用户中断）。异常记录只保存类型，不保存原始异常字符串。
 
 日志记录问题、模型回复和工具读写内容，不记录 API Key 或 HTTP 请求头。`logs/` 已在 `.gitignore` 中排除，普通 Git 提交不会包含运行日志。默认不会加载旧日志；通过 `--resume` 明确选择日志时，才会将其中的历史带入新任务。
 
@@ -505,7 +512,7 @@ for run in tool_runs:
 | `completed` | 模型正常回答，本次循环以 `stop` 结束 |
 | `failed` | 请求或参数处理异常，或模型输出被截断等异常结束 |
 | `cancelled` | 用户拒绝工具，或通过 Ctrl+C 中断本次任务 |
-| `paused` | 达到模型请求次数或总 token 阈值，或设置 token 阈值但无法获得总用量；按相应恢复规则继续 |
+| `paused` | 达到请求次数或总 token 阈值、无法核对总用量，或必要上下文仍超限；按相应恢复规则继续 |
 
 `completed` 表示循环正常结束，业务需求是否满足仍要核对实际输出和验收测试。单个工具返回 `ok: false` 时，任务通常仍是 `running`，模型可以根据错误继续调整。
 
@@ -672,6 +679,142 @@ python -B -X utf8 tool_call.py --workspace .\workspace\demo_project --recover $b
 
 本课不输出人民币费用估计。要估价，需先确定实际模型及版本、计价日期、币种、缓存命中与未命中的输入单价、输出单价和实际用量；总 token 直接乘单一价格不能代表真实账单。
 
+## 上下文选择与压缩
+
+第 34 课增加可选参数 `--context-chars N`。完整会话是保存的事实记录，上下文是本轮实际发送给任务模型的内容。此参数限制 `messages` 与 `tools` 的紧凑 JSON 字符数，包含工具说明和消息结构；不代表真实 token、HTTP 字节数或供应商的上下文窗口。真实用量仍以 API 的 `usage` 为准。仅指定此参数时使用规则摘录；增加 `--semantic-compact` 时按下文调用模型生成语义摘要。本课不引入分词器。
+
+启用后，每次请求前重新从完整记录构建上下文。系统指令和所有用户要求保持完整，最近一个助手回复及其整批工具结果优先保留；更早的助手回复与工具结果作为完整组逐步移出，用标有来源编号的历史摘录替代，不留下孤立的工具结果。超过 2000 字符的工具结果在发送副本中变为带 `context_truncated: true`、来源编号、执行状态及首尾摘录的 JSON，原始结果不变。工具调用参数不截断，缩短输出也不等于撤回已经发生的操作。
+
+摘录使用确定的首尾片段，明确标注省略；它没有理解并保证保留所有事实。完整用户要求仍保留，最近结果保留执行状态，旧细节可能需要重新搜索、读取或核验，旧结果也不能证明当前文件状态。所有用户消息、工具说明或最近一整组请求仍放不下时，程序不会静默删除必要内容。首次请求放不下会在读取密钥和创建日志前说明；任务中途放不下则记录 `paused / context_limit`，保留已完成操作，可在提高上限后显式 `--recover`。本课不能承诺任意长历史都可压到任意小上限。
+
+为了稳定观察长输出和旧历史选择，在系统临时目录复制一个练习项目，生成三份长资料。以下命令不改动原来的 demo_project：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$contextProject = Join-Path ([System.IO.Path]::GetTempPath()) ('learn-agent-context-' + [guid]::NewGuid().ToString('N'))
+Copy-Item -LiteralPath .\workspace\demo_project -Destination $contextProject -Recurse
+1..3 | ForEach-Object {
+    $contextText = "资料 $_，实验编号：7391。`n" + ("填充材料，仅用于观察上下文缩短。`n" * 180) + "`n待办：读完三份资料，再运行 main.py 核对统计结果。"
+    [System.IO.File]::WriteAllText((Join-Path $contextProject "note-$_.txt"), $contextText, [System.Text.UTF8Encoding]::new($false))
+}
+$contextTask = '先依次读取 note-1.txt、note-2.txt、note-3.txt。每轮只请求一个 read_file，收到结果后再读下一份；每轮不用解释。三份都读完后，用 run_python 运行 main.py。最后只报告实验编号和程序实际统计结果，不重复资料。不创建或修改文件。'
+python -B -X utf8 tool_call.py --workspace $contextProject --auto-read --stream --context-chars 9000 --max-model-calls 8 $contextTask
+```
+
+读取自动允许，运行 main.py 时仍需输入 `y`。预期能看到“上下文选择”的字符数变化，长工具结果被缩短，后面的请求出现旧消息摘录；入口仍输出总和 30、平均值 10.0、最小值 5、最大值 15，模型报告实验编号 7391，最后 `completed / stop`。实际轮次数和字符数随模型回复变化，不要求固定值；模型应按顺序逐轮读取，不能同一轮把三份长结果组成必须保留的大批次。若必要的最近批次超限，应提高上限或拆分任务。
+
+检查本次日志中每轮的选择，回查一条长结果的原文与发送副本：
+
+```powershell
+$contextLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+$contextEvents = @(Get-Content -LiteralPath $contextLog.FullName -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+$contextEvents | Where-Object { $_.event -eq 'context_selected' } |
+    Select-Object step, original_chars, selected_chars, blocked,
+        @{Name='shortened_tools'; Expression={@($_.shortened_tools).Count}},
+        @{Name='omitted_messages'; Expression={@($_.omitted_indices).Count}}
+
+$contextSelection = $contextEvents | Where-Object { $_.event -eq 'context_selected' -and @($_.shortened_tools).Count -gt 0 } | Select-Object -Last 1
+$contextRequest = $contextEvents | Where-Object { $_.event -eq 'model_request' -and $_.step -eq $contextSelection.step } | Select-Object -Last 1
+$contextIndex = $contextSelection.shortened_tools | Select-Object -First 1
+$contextOriginal = $contextRequest.full_messages[$contextIndex]
+$contextRawResult = $contextOriginal.content | ConvertFrom-Json
+$contextView = $contextRequest.payload.messages | Where-Object { $_.role -eq 'tool' -and $_.tool_call_id -eq $contextOriginal.tool_call_id } | Select-Object -First 1
+$contextSentResult = $contextView.content | ConvertFrom-Json
+"原始资料正文字符数：$($contextRawResult.content.Length)"
+$contextSentResult | Select-Object context_truncated, source_message, original_chars
+python -B -X utf8 tool_call.py --status $contextLog.FullName
+```
+
+所有已发送请求的 `selected_chars` 应不大于 9000；至少一轮 `shortened_tools` 大于 0，后续至少一轮 `omitted_messages` 大于 0。回查原文时应有完整的长正文，而发送副本明确标记 `context_truncated: true`。`kept_indices`、`omitted_indices` 和 `shortened_tools` 均使用 `full_messages` 的 0 起始编号，含第一条 system；`summary` 保存摘录文本。日志也保存实际 `payload`，因此可以核对被发送、被省略和被缩短的内容。
+
+在同一终端继续这个会话，先预览，保留压缩规则但不执行工具：
+
+```powershell
+$contextSession = ($contextEvents | Where-Object { $_.event -eq 'run_start' } | Select-Object -First 1).session_id
+$contextQuestion = '仅根据已有记录回答实验编号，以及最后一次 main.py 的统计结果。不要调用工具，也不要把旧结果说成刚刚重新运行。'
+python -B -X utf8 tool_call.py --workspace $contextProject --session $contextSession --context-chars 9000 --preview $contextQuestion
+python -B -X utf8 tool_call.py --workspace $contextProject --session $contextSession --context-chars 9000 --stream $contextQuestion
+```
+
+预览应包含历史摘录和当前问题，不创建日志或写数据库。实际续聊正常时无需工具确认，根据过去结果回答并 `stop` 结束。同一个 SQLite 会话继续追加完整业务消息，历史工具不自动重放；参数按本次命令决定，省略 `--context-chars` 就发送完整历史。JSONL 的 `--resume`、次数超限补齐以及取消或预算暂停的 `--recover` 也从完整记录重建，不把临时摘录写成原始 Message。
+
+如需进一步核对 SQLite 保存的是完整正文，可在同一终端执行下面的只读检查；使用日志中实际生成的 session_id：
+
+```powershell
+@'
+import json, sqlite3, sys
+from pathlib import Path
+entries = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+session_id = entries[0]["session_id"]
+database = sqlite3.connect((Path("logs/sessions.sqlite3").resolve().as_uri() + "?mode=ro"), uri=True)
+try:
+    rows = database.execute("SELECT content FROM messages WHERE session_id = ? AND role = 'tool' ORDER BY position", (session_id,))
+    for row in rows:
+        result = json.loads(row[0])
+        if result.get("tool") == "read_file":
+            print(result["path"], "完整正文字符数：", len(result["content"]))
+finally:
+    database.close()
+'@ | python -B -X utf8 - $contextLog.FullName
+```
+
+### 模型生成语义摘要
+
+第 34 课进一步参考 [DeepSeek Harness 默认压缩后端](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/compaction/compaction-basic/README.md) 的“先裁剪工具结果、必要时调用模型总结、保留最近记录”流程，增加显式开关 `--semantic-compact`，必须配合 `--context-chars`。它使用当前选定的同一个 DeepSeek 模型，先判断长结果裁剪后是否仍超限；需要移出旧记录时，额外请求一次模型整理语义摘要，然后用真实摘要重新检查字符预算。未开启时仍保留规则摘录方式。
+
+摘要按 [DeepSeek 官方 JSON Output](https://api-docs.deepseek.com/zh-cn/guides/json_mode/) 设置 `response_format: {"type": "json_object"}`，提示词包含 JSON 样例。输出包含六个字段：`goal`（目标）、`constraints`（约束）、`completed`（已有证据的工作）、`pending`（未完成事项）、`evidence`（来源与实际结果）、`next_step`（下一步）。摘要请求不声明工具，不执行工具调用，使用非流式和 `max_tokens: 1024`；普通任务仍可流式输出。必须以 `stop` 完整结束，并通过字段及类型检查，才允许用于后续上下文。结构检查不保证事实准确，需要核对关键约束和证据。
+
+摘要器接收全部用户要求、选中旧消息的原始内容，以及同次运行已有的语义摘要。原文可能比任务请求中的首尾片段更长，因而摘要请求本身可能超过 `--context-chars`；这个参数限制后续任务上下文，不是摘要输入窗口。日志记录摘要输入字符数，供应商上下文限制仍然有效；请求被拒绝时明确停止，不静默裁掉摘要输入或自动重试。在同次运行中，来源范围不变就复用摘要；需要覆盖更多旧记录时，传入已有摘要和新增来源，要求合并与修正。跨次运行从完整业务记录重建，本版不自动加载旧摘要缓存。
+
+所有调用共用 `--max-model-calls` 和 `--max-total-tokens`，不是给摘要额外一份预算。`run_end.summary.model_calls` 是两者合计，`task_model_calls` 和 `summary_model_calls` 分别统计次数；输入、输出、总 token 累计两种请求的服务用量。摘要失败或取消也计入已尝试请求，未收到用量时相应总量为未知。摘要后达到 token 阈值或缺少总用量便暂停；若摘要刚好用完最后一次请求额度，记录 `max_model_calls` 与 `budget_paused`，后续不请求任务模型，已执行工具仍按实际结果保存。摘要被截断、为空、格式错误或包含工具调用时记失败，不退回规则摘录继续执行；合法摘要仍放不下时记 `context_limit`，不截断摘要 JSON。
+
+用新的临时项目验证，保留原练习项目。下面特意将一个关键备注放在长资料中部，方便检查摘要器确实接收了选中来源的原文：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$semanticProject = Join-Path ([System.IO.Path]::GetTempPath()) ('learn-agent-semantic-' + [guid]::NewGuid().ToString('N'))
+Copy-Item -LiteralPath .\workspace\demo_project -Destination $semanticProject -Recurse
+1..3 | ForEach-Object {
+    $semanticText = "资料 $_，实验编号：7391。`n" + ("填充材料，仅用于观察上下文压缩。`n" * 90) + "`n关键备注：汇总时同时说明实验编号7391，不把未运行的入口说成已经运行。`n" + ("填充材料，仅用于观察上下文压缩。`n" * 90) + "`n待办：读完三份资料，再运行 main.py 核对统计结果。"
+    [System.IO.File]::WriteAllText((Join-Path $semanticProject "note-$_.txt"), $semanticText, [System.Text.UTF8Encoding]::new($false))
+}
+$semanticTask = '先依次读取 note-1.txt、note-2.txt、note-3.txt。每轮只请求一个 read_file，收到结果后再读下一份；每轮不用解释。三份都读完后，用 run_python 运行 main.py。最后只报告实验编号和程序实际统计结果，不重复资料。不创建或修改文件。'
+python -B -X utf8 tool_call.py --workspace $semanticProject --auto-read --stream --context-chars 9000 --semantic-compact --max-model-calls 12 --max-total-tokens 50000 $semanticTask
+```
+
+读取自动允许，运行入口时输入 `y`。预期出现“语义摘要”和“摘要用量”，后续上下文标明“模型摘要”；任务与摘要分别计数，合计包含两者。应输出实验编号7391与入口统计值（total 30、average 10.0、min 5、max 15），最终 `completed / stop`。摘要次数受模型回复长度影响，不要求固定为 1；同一来源范围应复用。关键中部备注可在摘要器的实际请求中核对，摘要文本是否准确保留含义仍需人工检查。
+
+查看摘要、调用次数及最终预算统计：
+
+```powershell
+$semanticLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+$semanticEvents = @(Get-Content -LiteralPath $semanticLog.FullName -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+$semanticEvents | Where-Object { $_.event -in @('model_request', 'compaction_request', 'compaction_end', 'run_end') } |
+    Select-Object event, step, call_index, validated, reason
+$semanticCheckpoint = $semanticEvents | Where-Object { $_.event -eq 'compaction_end' -and $_.validated } | Select-Object -Last 1
+$semanticCheckpoint.summary.data | ConvertTo-Json -Depth 5
+($semanticEvents | Where-Object { $_.event -eq 'run_end' } | Select-Object -Last 1).summary | ConvertTo-Json -Depth 5
+"任务请求记录数：$(@($semanticEvents | Where-Object { $_.event -eq 'model_request' }).Count)"
+"摘要请求记录数：$(@($semanticEvents | Where-Object { $_.event -eq 'compaction_request' }).Count)"
+```
+
+两类请求记录数之和应等于 `model_calls`，摘要记录数应等于 `summary_model_calls`。`step` 表示任务轮次，`call_index` 表示包含摘要的整体调用顺序；摘要没有推进任务轮次。`compaction_request.full_messages`、`source_indices` 和 `compaction_end.summary.source_step` 可回查原始范围。任务上下文里的摘要只是发送副本，不进入 SQLite 的业务消息，原文和实际 ToolRun 继续保存。
+
+若要单独验证摘要用完次数预算，在同一终端对同一个临时项目执行：
+
+```powershell
+python -B -X utf8 tool_call.py --workspace $semanticProject --auto-read --stream --context-chars 9000 --semantic-compact --max-model-calls 4 --max-total-tokens 50000 $semanticTask
+$semanticLimitLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+python -B -X utf8 tool_call.py --status $semanticLimitLog.FullName
+```
+
+当模型按要求逐轮读取三份资料，第4次整体调用用于摘要时，应以 `paused / max_model_calls` 停止，不再确认或运行入口；已读取结果保留。此时可用 `--resume` 或 `--session`，从完整快照继续；不会把已执行的读取伪造成 NotExecuted。普通任务回复在次数上限提出的新工具仍不执行，并按原规则补齐 NotExecuted。token 暂停、摘要失败或取消继续使用 `--recover`，当前权限与预算重新决定，旧工具不重放。预览始终不调用摘要模型；如需摘要，会明确说明显示的规则摘录仅为规划占位，实际摘要须运行后生成。
+
 ## 会话恢复
 
 `--resume` 接受以 `run_end.reason: stop` 正常结束，或以 `max_model_calls` 达到请求次数上限而停止的 JSONL 日志，同时必须提供新的问题或任务。以下示例适用于最近一次运行正常结束的情况：
@@ -716,7 +859,7 @@ python tool_call.py --resume $stoppedLog $task
 
 恢复只加载消息，不会执行历史中的工具调用。模型、输出预算、API Key 和权限策略均按本次运行决定；上次的 `--auto-read` 不会自动继承，写入和运行仍分别确认。旧日志保持原样，新任务创建新的日志，`run_start.resumed_from` 记录来源路径；普通新任务中该字段为 `null`。新的日志已经包含继承后的历史，因此也可以再次用于恢复。
 
-这一版支持正常结束和请求次数上限两种恢复。日志缺失结束记录、以拒绝或输出截断等其他原因结束、消息中的工具请求与结果不对应时，会在读取密钥或请求 API 前停止。标为超限停止的最后一轮若已有工具执行记录，也会拒绝按未执行状态恢复。恢复后的工具结果描述过去的执行状态；需要验证当前文件时，应重新运行相应工具。
+`--resume` 支持正常结束和请求次数上限两种恢复。日志缺失结束记录、以拒绝或输出截断等其他原因结束、消息中的工具请求与结果不对应时，会在读取密钥或请求 API 前停止。普通次数超限的最后一轮若已有工具执行记录，会拒绝按未执行状态恢复；摘要用完额度时另有完整的 `budget_paused` 快照，保留已执行结果而不补成 NotExecuted。恢复后的工具结果描述过去的执行状态；需要验证当前文件时，应重新运行相应工具。
 
 ## 验证
 
@@ -770,7 +913,11 @@ python -m unittest discover -s tests -v
 
 第 32 课新增 `tests/test_streaming.py` 的 17 项测试，累计 241 项通过。模拟 HTTP SSE 传输，覆盖中文与逐段即时显示、片段按工具 index 交错组装、CRLF 与多行 data、完整结束信号和用量保留、参数未收齐及缺少 DONE 时不执行、整批参数校验、输出截断、中途取消与 HTTP 断流、连接关闭、只读预览、恢复不重放片段、会话正常续聊与流式选项不继承。自动化测试在临时项目实际运行 Python，并使用真实 SQLite，不调用付费 API。真实模型任务已验证 135 条流式片段、完整回复后才确认并执行工具、正确统计结果、完整会话保存与 completed / stop。
 
-第 33 课新增 `tests/test_budget.py` 的 17 项测试，当前累计 258 项通过。覆盖逐轮累计与重复历史输入、缓存字段不重复相加、阈值相等与超出时阻止工具、保留前轮结果、显式请求次数限制、缺失与无效用量、部分明细、完整最终回答与截断的区别、异常与取消后的未知用量、拒绝、单调时钟与确认等待、预算暂停恢复预览及重新授权、续聊不继承预算、无效参数和流式片段不重复计数。README 的本课三组命令已在临时项目中使用 Windows PowerShell 5.1 验证，模型及 HTTP 回复模拟，Python 子进程与 SQLite 实际执行；没有调用付费 API。第 33 课真实模型的正常统计、预算暂停与恢复流程待使用者运行确认。
+第 33 课新增 `tests/test_budget.py` 的 17 项测试，累计 258 项通过。覆盖逐轮累计与重复历史输入、缓存字段不重复相加、阈值相等与超出时阻止工具、保留前轮结果、显式请求次数限制、缺失与无效用量、部分明细、完整最终回答与截断的区别、异常与取消后的未知用量、拒绝、单调时钟与确认等待、预算暂停恢复预览及重新授权、续聊不继承预算、无效参数和流式片段不重复计数。README 的本课三组命令已在临时项目中使用 Windows PowerShell 5.1 验证，模型及 HTTP 回复模拟，Python 子进程与 SQLite 实际执行；没有调用付费 API。使用者已真实验证正常任务显示累计用量、预算设为 1 时 paused / max_total_tokens 且工具结果数为 0，提高预算并重新确认后成功执行，最终 completed / stop。
+
+第 34 课基础部分新增 `tests/test_context.py` 的 18 项测试，累计 276 项通过。覆盖完整用户要求与系统指令保留、最近工具批次与多工具配对、工具长结果的 JSON 投影与执行状态、可追溯摘录、字符预算与工具说明、必要内容超限、长任务继续、SQLite 保存完整 Message / ToolRun、JSONL 与 SQLite 续聊、只读预览、次数超限修复、取消后的恢复、写入已发生后的上下文暂停及显式恢复、未启用时保持原行为、无效参数、流式传输和真实用量统计。四组 README 命令已在临时项目用 Windows PowerShell 5.1 离线验证：3 次真实文件读取、1 次真实 Python 运行、SQLite 完整原文及续聊；模拟模型产生的 5 轮上下文均未超过 9000 字符，后两轮各用摘录替代了 4 条旧消息。
+
+第 34 课语义摘要扩展新增 `tests/test_compaction.py` 的 20 项测试，当前累计 296 项通过。覆盖六字段结构校验、原始中部事实进入摘要输入、无工具的 JSON 摘要请求、同次复用与增量合并、任务与摘要共用次数和 token、预算刚好耗尽后的完整快照恢复、任务轮次与整体调用序号、缺失用量、格式错误与截断、拒绝执行摘要中的工具、超时与取消、过大摘要停止、只读预览、继承历史后首个摘要失败、摘要独占唯一请求额度的恢复，以及普通流式任务与非流式摘要混合传输。新增的三组 PowerShell 5.1 命令已离线验证：成功任务为 5 次任务请求加 1 次摘要请求；额度为 4 时在 3 次读取加 1 次摘要后暂停，不运行入口。实际文件读取、Python 和 SQLite 使用临时数据，模型与 HTTP 传输模拟，没有调用付费 API；真实摘要质量、统计与预算暂停待使用者验证。
 
 ## 许可证
 

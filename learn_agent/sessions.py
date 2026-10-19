@@ -72,8 +72,12 @@ def project_run(entries: list[dict]) -> tuple[list[dict], list[ToolRun]]:
     run_log = entries[0]["log_path"]
     for entry in entries:
         event = entry["event"]
-        if event == "model_request":
-            messages = list(entry["payload"]["messages"][1:])
+        if event == "run_start" and entry.get("initial_messages"):
+            messages = list(entry["initial_messages"][1:])
+        elif event == "budget_paused":
+            messages = list(entry["full_messages"][1:])
+        elif event == "model_request":
+            messages = list(entry.get("full_messages", entry["payload"]["messages"])[1:])
         elif event == "model_response":
             message = entry["response"]["choices"][0]["message"]
             messages.append({"role": "assistant", "content": message.get("content"),

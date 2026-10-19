@@ -12,6 +12,7 @@ class RunBudget:
     max_model_calls: int
     max_total_tokens: int | None = None
     model_calls: int = field(default=0, init=False)
+    summary_model_calls: int = field(default=0, init=False)
     responses_received: int = field(default=0, init=False)
     reported_usage: dict = field(default_factory=lambda: dict.fromkeys(TOKEN_FIELDS, 0), init=False)
     usage_reports: dict = field(default_factory=lambda: dict.fromkeys(TOKEN_FIELDS, 0), init=False)
@@ -23,7 +24,14 @@ class RunBudget:
         if self.max_total_tokens is not None and (type(self.max_total_tokens) is not int or self.max_total_tokens <= 0):
             raise ValueError("总 token 预算必须是正整数。")
 
-    def observe(self, response: dict) -> None:
+    def start_call(self, purpose: str = "task") -> None:
+        if self.model_calls >= self.max_model_calls:
+            raise ValueError("模型请求次数预算已用完，未发起新请求。")
+        self.model_calls += 1
+        if purpose == "summary":
+            self.summary_model_calls += 1
+
+    def observe(self, response: dict, purpose: str = "task") -> None:
         self.responses_received += 1
         usage = response.get("usage")
         usage = usage if isinstance(usage, dict) else {}
@@ -36,7 +44,7 @@ class RunBudget:
                 values.append(str(value))
             else:
                 values.append("未提供")
-        print(f"[本轮用量] 输入 {values[0]}，输出 {values[1]}，合计 {values[2]} token")
+        print(f"[{'摘要用量' if purpose == 'summary' else '本轮用量'}] 输入 {values[0]}，输出 {values[1]}，合计 {values[2]} token")
 
     def pause_reason(self) -> str | None:
         if self.max_total_tokens is None:
@@ -52,6 +60,8 @@ class RunBudget:
                  for name in TOKEN_FIELDS}
         return {
             "model_calls": self.model_calls,
+            "task_model_calls": self.model_calls - self.summary_model_calls,
+            "summary_model_calls": self.summary_model_calls,
             "responses_received": self.responses_received,
             "elapsed_seconds": round(monotonic() - self.started_at, 3),
             "usage": usage,
@@ -63,6 +73,7 @@ class RunBudget:
 
 def print_summary(summary: dict) -> None:
     print(f"\n[任务用量] 模型请求 {summary['model_calls']} 次，完整回复 {summary['responses_received']} 次，耗时 {summary['elapsed_seconds']:.3f} 秒（包含等待确认）")
+    print(f"其中任务请求 {summary['task_model_calls']} 次，摘要请求 {summary['summary_model_calls']} 次；两者共用预算。")
     for name, label in zip(TOKEN_FIELDS, ("输入", "输出", "合计")):
         value = summary["usage"][name]
         if value is None:

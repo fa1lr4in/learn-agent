@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TextIO
 
 from . import permissions
-from .tasks import STATE_LABELS, TaskStatus
+from .tasks import STATE_LABELS, TaskStatus, replay_events
 
 
 def record_event(log_file: TextIO | EventRecorder | None, event: str, **details) -> None:
@@ -60,13 +60,21 @@ def history_from_entries(entries: list[dict], workspace: Path | None = None) -> 
         if entries[-1]["event"] != "run_end" or entries[-1]["reason"] not in ("stop", "max_model_calls"):
             raise ValueError("目前只支持恢复正常结束或因模型请求次数上限停止的会话。")
         end_reason = entries[-1]["reason"]
+        if end_reason == "max_model_calls" and entries[-2]["event"] == "budget_paused":
+            replay_events(entries)
+            snapshot = entries[-2]
+            messages = snapshot["full_messages"]
+            if snapshot["reason"] != end_reason or not messages or messages[0]["role"] != "system":
+                raise ValueError("预算暂停快照无效，无法恢复。")
+            validate_history(messages[1:])
+            return list(messages[1:])
         request = next(entry for entry in reversed(entries) if entry["event"] == "model_request")
         response = next(entry for entry in reversed(entries) if entry["event"] == "model_response")
         choice = response["response"]["choices"][0]
         expected_finish = "stop" if end_reason == "stop" else "tool_calls"
         if request["step"] != response["step"] or choice["finish_reason"] != expected_finish:
             raise ValueError("日志中的最后一次请求、回复与结束原因不对应。")
-        messages = request["payload"]["messages"]
+        messages = request.get("full_messages", request["payload"]["messages"])
         if not isinstance(messages, list) or not messages or messages[0]["role"] != "system":
             raise ValueError("日志缺少完整的消息历史。")
         final = choice["message"]

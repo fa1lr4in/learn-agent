@@ -9,7 +9,7 @@ from .sessions import project_run
 from .tasks import replay_events
 
 
-RECOVERABLE_REASONS = ("cancelled", "user_denied", "error", "abnormal_finish", "max_total_tokens", "usage_unavailable")
+RECOVERABLE_REASONS = ("cancelled", "user_denied", "error", "abnormal_finish", "max_total_tokens", "usage_unavailable", "context_limit")
 RECOVERY_LABELS = {"recorded": "已有结果", "not_executed": "确定未执行", "unknown": "结果未知，需核对"}
 
 
@@ -40,8 +40,8 @@ def load_recovery(path: str, workspace: Path) -> RecoveryPlan:
         reason = status.reason if status.ended else "unfinished"
         if reason not in (*RECOVERABLE_REASONS, "unfinished"):
             raise ValueError("正常结束或请求次数超限的任务请使用 --resume；--recover 用于取消、异常和 token 预算暂停的任务。")
-        request = next(entry for entry in reversed(entries) if entry["event"] == "model_request")
-        messages = request["payload"]["messages"]
+        request = next((entry for entry in reversed(entries) if entry["event"] == "model_request"), None)
+        messages = request.get("full_messages", request["payload"]["messages"]) if request else entries[0].get("initial_messages")
         if not messages or messages[0]["role"] != "system":
             raise ValueError("日志缺少完整请求，不能恢复。")
         history = list(messages[1:])
@@ -65,10 +65,11 @@ def load_recovery(path: str, workspace: Path) -> RecoveryPlan:
             results[key] = (tool, state)
 
         response = next((entry for entry in reversed(entries)
-                         if entry["event"] == "model_response" and entry["step"] == request["step"]), None)
+                         if entry["event"] == "model_response" and request is not None and entry["step"] == request["step"]), None)
         note = ""
         if response is None:
-            note = "最后一次模型请求没有完整回复；可以显式重新请求模型，不自动重试旧工具。"
+            note = ("尚未请求任务模型；摘要不会作为业务回复恢复，可以显式继续。" if request is None else
+                    "最后一次模型请求没有完整回复；可以显式重新请求模型，不自动重试旧工具。")
         else:
             choice = response["response"]["choices"][0]
             message = choice["message"]

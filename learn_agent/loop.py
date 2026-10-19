@@ -5,6 +5,8 @@ from typing import TextIO
 
 from . import tools
 from .budget import RunBudget
+from .compaction import generate_summary
+from .context import ContextLimitError, print_context, select_context
 from .events import EventRecorder, record_event
 from .model import call_model
 from .permissions import approve_tool
@@ -14,22 +16,50 @@ MAX_MODEL_CALLS = 8
 
 
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
-              budget: RunBudget | None = None) -> str:
+              budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
     request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
+    summary_cache = None
     for step in range(1, budget.max_model_calls + 1):
+        api_request = request
+        context_details = {}
+        if context_chars is not None:
+            try:
+                api_request, report = select_context(request, context_chars, summary_cache)
+                if semantic_compact and report["needs_summary"]:
+                    summary_cache = generate_summary(request, report, summary_cache, api_key, budget, log_file, step)
+                    reason = budget.pause_reason() or ("max_model_calls" if budget.model_calls >= budget.max_model_calls else None)
+                    if reason:
+                        if reason == "max_model_calls":
+                            record_event(log_file, "budget_paused", reason=reason, full_messages=request["messages"])
+                        print(f"摘要调用后任务预算已停止（{reason}）；未请求本轮任务模型，已有结果保留。")
+                        return reason
+                    api_request, report = select_context(request, context_chars, summary_cache)
+                    if report["needs_summary"]:
+                        record_event(log_file, "context_selected", step=step,
+                                     **{**report, "blocked": True, "blocked_reason": "summary_did_not_fit"})
+                        print("模型摘要未能在本次选择范围内满足字符预算；请提高上限后恢复，未继续请求模型。")
+                        return "context_limit"
+            except ContextLimitError as error:
+                record_event(log_file, "context_selected", step=step, **error.report)
+                print(f"任务暂停：{error} 未请求本轮模型，此前已完成的操作保留。")
+                return "context_limit"
+            print_context(report)
+            record_event(log_file, "context_selected", step=step, **report)
+            context_details["full_messages"] = request["messages"]
         if step > 1:
             if request.get("stream"):
                 print(f"\n[第 {step} 次请求：携带历史消息继续流式接收]")
             else:
                 print(f"\n[第 {step} 次请求里的消息历史]")
-                print(json.dumps(request["messages"], ensure_ascii=False, indent=2))
-        record_event(log_file, "model_request", step=step, payload=request)
-        budget.model_calls += 1
+                print(json.dumps(api_request["messages"], ensure_ascii=False, indent=2))
+        budget.start_call()
+        record_event(log_file, "model_request", step=step, call_index=budget.model_calls, payload=api_request, **context_details)
+        reply_label = f"第 {step} 轮任务回复；总第 {budget.model_calls} 次模型请求" if semantic_compact else f"第 {step} 次模型回复"
         if request.get("stream"):
-            print(f"\n[第 {step} 次模型回复：流式接收]", flush=True)
+            print(f"\n[{reply_label}：流式接收]", flush=True)
             tool_notice = False
 
             def show_delta(delta):
@@ -42,17 +72,17 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                     tool_notice = True
 
             try:
-                response = call_model(request, api_key, on_delta=show_delta)
+                response = call_model(api_request, api_key, on_delta=show_delta)
             finally:
                 print(flush=True)
         else:
-            response = call_model(request, api_key)
+            response = call_model(api_request, api_key)
         record_event(log_file, "model_response", step=step, response=response)
         budget.observe(response)
         choice = response["choices"][0]
         message = choice["message"]
         if not request.get("stream"):
-            print(f"\n[第 {step} 次模型回复]")
+            print(f"\n[{reply_label}]")
             print(json.dumps(message, ensure_ascii=False, indent=2))
         elif message.get("tool_calls"):
             print("[完整工具请求]")
@@ -77,7 +107,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             print("已达到总 token 停止阈值。" if budget_reason == "max_total_tokens" else "服务未提供有效的总 token 用量，无法继续核对预算。")
             print("任务暂停：未执行本轮工具，不再请求模型；此前已完成的操作保留。")
             return budget_reason
-        if step == budget.max_model_calls:
+        if budget.model_calls >= budget.max_model_calls:
             print(f"已达到最多 {budget.max_model_calls} 次模型请求，任务未完成；未执行本轮工具。")
             return "max_model_calls"
 
