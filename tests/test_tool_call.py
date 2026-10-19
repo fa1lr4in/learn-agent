@@ -633,19 +633,19 @@ class ToolCallTests(unittest.TestCase):
                 text = paths[0].read_text(encoding="utf-8")
                 entries = [json.loads(line) for line in text.splitlines()]
                 self.assertEqual([entry["event"] for entry in entries], [
-                    "run_start", "model_request", "model_response", "tool_approval", "tool_result",
+                    "run_start", "model_request", "model_response", "tool_waiting", "tool_approval", "tool_result",
                     "model_request", "model_response", "run_end",
                 ])
                 self.assertTrue(all(entry["time"].endswith("+00:00") for entry in entries))
-                self.assertEqual(entries[3]["tool_call_id"], "call_test")
-                self.assertTrue(entries[3]["approved"])
-                self.assertEqual(entries[3]["source"], "user")
-                self.assertFalse(entries[0]["auto_read"])
-                self.assertEqual(entries[4]["result"]["ok"], succeeds)
                 self.assertEqual(entries[4]["tool_call_id"], "call_test")
-                history = entries[5]["payload"]["messages"]
-                self.assertEqual(json.loads(history[-1]["content"]), entries[4]["result"])
-                self.assertEqual(entries[6]["response"]["usage"], {"total_tokens": 123})
+                self.assertTrue(entries[4]["approved"])
+                self.assertEqual(entries[4]["source"], "user")
+                self.assertFalse(entries[0]["auto_read"])
+                self.assertEqual(entries[5]["result"]["ok"], succeeds)
+                self.assertEqual(entries[5]["tool_call_id"], "call_test")
+                history = entries[6]["payload"]["messages"]
+                self.assertEqual(json.loads(history[-1]["content"]), entries[5]["result"])
+                self.assertEqual(entries[7]["response"]["usage"], {"total_tokens": 123})
                 self.assertEqual(entries[-1]["reason"], "stop")
                 self.assertNotIn("offline-sensitive-test-key", text)
                 self.assertNotIn("Authorization", text)

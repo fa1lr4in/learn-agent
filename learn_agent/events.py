@@ -1,20 +1,41 @@
 """JSONL event recording and message-history restoration."""
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
 from . import permissions
+from .tasks import STATE_LABELS, TaskStatus
 
 
-def record_event(log_file: TextIO | None, event: str, **details) -> None:
+def record_event(log_file: TextIO | EventRecorder | None, event: str, **details) -> None:
     """Append and flush one JSON event without receiving API credentials."""
+    if isinstance(log_file, EventRecorder):
+        log_file.record(event, **details)
+        return
     if log_file is None:
         return
     entry = {"time": datetime.now(timezone.utc).isoformat(), "event": event, **details}
     log_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
     log_file.flush()
+
+
+class EventRecorder:
+    """Keep one run's live status consistent with its flushed event log."""
+
+    def __init__(self, log_file: TextIO | None):
+        self.log_file = log_file
+        self.status = TaskStatus()
+
+    def record(self, event: str, **details) -> None:
+        previous = self.status.state
+        self.status.apply({"event": event, **details})
+        record_event(self.log_file, event, **details, task_state=self.status.state)
+        if event == "run_start" or self.status.state != previous:
+            print(f"\n[任务状态] {self.status.state}（{STATE_LABELS[self.status.state]}）")
 
 
 def load_history(path: str) -> list[dict]:

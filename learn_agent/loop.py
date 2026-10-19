@@ -4,7 +4,7 @@ import json
 from typing import TextIO
 
 from . import tools
-from .events import record_event
+from .events import EventRecorder, record_event
 from .model import call_model
 from .permissions import approve_tool
 
@@ -12,7 +12,9 @@ from .permissions import approve_tool
 MAX_MODEL_CALLS = 8
 
 
-def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_read: bool = False) -> str:
+def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False) -> str:
+    if not isinstance(log_file, EventRecorder):
+        log_file = EventRecorder(log_file)
     request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
     for step in range(1, MAX_MODEL_CALLS + 1):
         if step > 1:
@@ -67,6 +69,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | None = None, auto_
         for tool_call, name, tool, arguments in prepared_calls:
             try:
                 prepared = tool.prepare(arguments)
+                if not (auto_read and tool.read_only):
+                    record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"])
                 approved, source = approve_tool(prepared.action, tool.read_only, auto_read)
                 record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source)
                 if not approved:

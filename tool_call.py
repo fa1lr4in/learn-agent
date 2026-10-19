@@ -9,9 +9,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from learn_agent import checkpoints, loop, permissions
-from learn_agent.events import load_history, record_event
+from learn_agent.events import EventRecorder, load_history, record_event
 from learn_agent.model import get_api_key
 from learn_agent.sessions import SessionStore
+from learn_agent.tasks import STATE_LABELS, replay_events
 from learn_agent.tools import tool_schemas
 
 
@@ -26,6 +27,7 @@ def main() -> None:
     mode.add_argument("--diff", metavar="LOG", help="查看该运行检查点中的文件工具修改，不调用模型")
     mode.add_argument("--undo", metavar="LOG", help="展示撤回差异，确认后恢复该运行记录的文件工具修改")
     mode.add_argument("--sessions", action="store_true", help="列出本地 SQLite 会话，不调用模型")
+    mode.add_argument("--status", metavar="LOG", help="从 JSONL 还原一次任务的状态变化，不调用模型或工具")
     parser.add_argument("--auto-read", action="store_true", help="自动允许浏览、搜索和读取 workspace 内的可访问文件并发送结果；写入、编辑和运行仍需确认")
     restore = parser.add_mutually_exclusive_group()
     restore.add_argument("--resume", metavar="LOG", help="从正常结束或达到请求次数上限的 JSONL 日志恢复历史；需提供新任务")
@@ -34,8 +36,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.session is not None and not args.session.strip():
         parser.error("会话 ID 不能为空；请提供 --sessions 列表中的 ID。")
-    if (args.diff or args.undo or args.sessions) and (args.prompt is not None or args.resume or args.session):
-        parser.error("查看会话列表、检查或撤回时，不提供新任务或恢复参数。")
+    if (args.diff or args.undo or args.sessions or args.status) and (args.prompt is not None or args.resume or args.session):
+        parser.error("查看状态、会话列表、检查或撤回时，不提供新任务或恢复参数。")
     if (args.resume or args.session) and args.prompt is None:
         parser.error("使用 --resume 或 --session 时，请同时提供新的问题或任务。")
     try:
@@ -48,12 +50,30 @@ def main() -> None:
                     print("尚无已保存的会话。")
                 for session in saved:
                     print(f"{session.id}  reason={session.reason}  更新于 {session.updated_at}\n  workspace={session.workspace}")
+            elif args.status:
+                show_task_status(args.status)
             elif args.diff or args.undo:
                 review_changes(args.diff or args.undo, undo=bool(args.undo))
             else:
                 run_cli(args)
     except (ValueError, OSError, RuntimeError, sqlite3.Error) as error:
         raise SystemExit(f"本次实验停止：{error}") from None
+
+
+def show_task_status(log_path: str) -> None:
+    path = Path(log_path).resolve()
+    try:
+        entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        status, transitions = replay_events(entries)
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("任务日志格式不完整或无效。") from error
+    print(f"[任务日志] {path}")
+    for event, state in transitions:
+        print(f"{event}: {state}（{STATE_LABELS[state]}）")
+    print(f"[当前状态] {status.state}（{STATE_LABELS[status.state]}）")
+    print(f"[结束原因] {status.reason or '尚无 run_end 记录，无法确认任务是否已经结束'}")
+    if not status.ended:
+        print("这里只显示日志最后保存的状态，不能据此确认进程仍在运行。")
 
 
 def review_changes(log_path: str, undo: bool = False) -> None:
@@ -140,18 +160,19 @@ def run_cli(args: argparse.Namespace) -> None:
         log_file = log_path.open("x", encoding="utf-8")
         try:
             with log_file:
+                events = EventRecorder(log_file)
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(log_file, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None)
+                record_event(events, "run_start", session_id=session_id, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=loop.MAX_MODEL_CALLS, auto_read=args.auto_read, resumed_from=str(Path(args.resume).resolve()) if args.resume else None)
                 try:
                     with checkpoints.track_changes(log_path):
-                        reason = loop.run_agent(payload, api_key, log_file, auto_read=args.auto_read)
+                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read)
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                     reason = "cancelled" if isinstance(error, KeyboardInterrupt) else "error"
-                    record_event(log_file, "run_end", reason=reason, error_type=type(error).__name__)
+                    record_event(events, "run_end", reason=reason, error_type=type(error).__name__)
                     raise
-                record_event(log_file, "run_end", reason=reason)
+                record_event(events, "run_end", reason=reason)
         finally:
             try:
                 store.save_run(session_id, log_path, expected_log=saved_session.last_log if saved_session else None)

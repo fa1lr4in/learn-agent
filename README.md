@@ -35,8 +35,9 @@
 - 支持 `--workspace DIR` 选择已有项目目录，省略时使用本仓库的 `workspace/`；展示根目录并写入系统指令和日志，工具路径相对本次根目录，恢复日志时检查项目是否一致。
 - 每次命令行任务保存文件工具检查点，支持 `--diff LOG` 查看本次变化、`--undo LOG` 确认后撤回；保留原有未提交内容和暂存区，检测待撤回文件的后续变化。
 - 任务结束后将 `Session`、`Message` 和 `ToolRun` 用一个事务保存到本地 SQLite；支持 `--sessions` 列出会话、`--session ID 新任务` 继续同一个会话，预览不写数据库，历史工具不自动重放。
+- 根据实际事件记录运行、等待确认、完成、失败、取消与暂停状态；支持 `--status LOG` 只读查看一次任务的状态变化，拒绝或结束后不启动后续操作。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课首次真实读取与 SQLite 入库已验证；已修复空会话 ID 被当作新任务的问题，当前共 191 项测试，指定 ID 的真实续聊待重试。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课任务状态与事件已实现，当前共 206 项自动化测试通过，真实模型验收待完成。
 
 ## 代码结构与工具注册
 
@@ -53,6 +54,7 @@ learn_agent/
   permissions.py        工作目录边界、只读规则和 approve_tool 确认策略
   events.py             JSONL 记录、历史恢复和消息与工具对应检查
   sessions.py           Session / Message / ToolRun、SQLite 事务保存与按 ID 恢复
+  tasks.py              TaskStatus、事件推导状态与只读回放
 tests/                  使用临时目录和模拟模型响应的自动化测试
 workspace/              Agent 可以操作的练习目录
 ```
@@ -434,18 +436,23 @@ python -B -X utf8 .\workspace\demo_project\main.py
 ```powershell
 $project = (Resolve-Path -LiteralPath .\workspace\demo_project).Path
 python -B -X utf8 tool_call.py --workspace $project --auto-read "请读取 main.py 和 src/stats.py，说明入口当前使用的 values 以及 summarize 返回的字段。本次只读取，不创建、修改或运行文件，回答保持简短。"
+if ($LASTEXITCODE -ne 0) { throw "任务异常结束，请先检查输出。" }
+$runLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+$sessionId = (Get-Content -LiteralPath $runLog.FullName -TotalCount 1 -Encoding UTF8 |
+    ConvertFrom-Json).session_id
+Write-Host "本次会话 ID：$sessionId"
+$sessionId | Set-Content -LiteralPath .\logs\lesson29-session-id.txt -Encoding UTF8
 python -B -X utf8 tool_call.py --sessions
 ```
 
 预期两份源码读取成功，任务以 `stop` 结束，并显示保存到 `sessions.sqlite3` 的会话 ID。列表操作不读取密钥或调用模型。数据库与原有 JSONL、检查点一起位于被 Git 忽略的 `logs/` 中，不提交到 GitHub。
 
-记下会话 ID。可以关闭终端，再打开 PowerShell 并进入 learn-agent 根目录，重新选择同一项目，粘贴刚才的 ID：
-
-`Read-Host` 后引号中的文字是提示。运行到冒号时，再粘贴 ID 并回车；只把提示文字换成 ID 再直接回车，不会给变量赋上那个 ID。也可以直接使用 `$sessionId = '复制的会话ID'`。程序会在读取密钥或调用模型前拒绝空字符串和纯空白 ID，避免误建新会话。
+会话 ID 由本地程序在真实任务开始时生成；先完成上面的任务，再从本次新日志取得 ID 并保存到 `logs/lesson29-session-id.txt`。这些步骤在同一个终端顺序执行，期间不启动其他任务。预览不会创建会话，不预先填写某个已有 ID。可以关闭终端，再打开 PowerShell 并进入 learn-agent 根目录，从本地文件加载刚才的 ID。程序会在读取密钥或调用模型前拒绝空字符串和纯空白 ID。
 
 ```powershell
 $project = (Resolve-Path -LiteralPath .\workspace\demo_project).Path
-$sessionId = Read-Host '粘贴刚才保存的会话 ID'
+$sessionId = (Get-Content -LiteralPath .\logs\lesson29-session-id.txt -Raw -Encoding UTF8).Trim()
 python -B -X utf8 tool_call.py --workspace $project --session $sessionId --preview "只根据历史，告诉我入口的 values 和 summarize 返回的字段，不调用工具。"
 python -B -X utf8 tool_call.py --workspace $project --session $sessionId "只根据历史，告诉我入口的 values 和 summarize 返回的字段，不调用工具。"
 ```
@@ -478,6 +485,47 @@ for run in tool_runs:
 本课先在命令行任务结束时保存。拒绝、异常和取消等已结束运行也会留下可查询记录，但仅正常结束和请求次数上限两种状态允许续聊。强制关闭进程或断电可能只留下部分 JSONL，尚未完成的这次运行不会自动进入 SQLite；逐步持久化、任务状态和异常恢复留到后续课程。SQLite 保存的是当时的会话，不保证文件后来没有变化，需要验证当前项目时仍应调用工具。
 
 此前的旧日志不会自动批量导入 SQLite，需要时继续使用下方 `--resume`。
+
+## 任务状态与事件
+
+第 30 课把一次命令行任务的状态与实际事件关联起来。同一个 Session 可以有多次任务；一次任务可以请求模型多次。模型回复 `tool_calls` 时，当前任务仍在运行，并没有结束。
+
+| 状态 | 含义 |
+| --- | --- |
+| `running` | 正在请求模型、处理回复或执行已经允许的工具 |
+| `waiting_approval` | 操作准备完成，等待用户输入确认；尚未执行工具 |
+| `completed` | 模型正常回答，本次循环以 `stop` 结束 |
+| `failed` | 请求或参数处理异常，或模型输出被截断等异常结束 |
+| `cancelled` | 用户拒绝工具，或通过 Ctrl+C 中断本次任务 |
+| `paused` | 达到模型请求次数上限，本次停止；仍可按原规则恢复历史 |
+
+`completed` 表示循环正常结束，业务需求是否满足仍要核对实际输出和验收测试。单个工具返回 `ok: false` 时，任务通常仍是 `running`，模型可以根据错误继续调整。
+
+新日志在原有事件中增加 `task_state`。需要人工确认时，先写入并刷新 `tool_waiting`，再等待输入；确认后回到 `running`，拒绝后变为 `cancelled`。自动允许的只读工具不进入等待状态。`run_end` 继续保留原有 `reason`，终止状态与后续操作的检查发生在请求模型或执行工具之前。SQLite 格式不变，任务状态保存在每次独立的 JSONL 中。
+
+在 learn-agent 根目录验证，先运行下面的任务，出现运行 `main.py` 的确认时输入 `n`：
+
+```powershell
+$project = (Resolve-Path -LiteralPath .\workspace\demo_project).Path
+$task = "请直接使用 run_python 运行项目根目录的 main.py，根据真实工具结果简要报告输出。不先读取文件，不创建或修改文件。"
+python -B -X utf8 tool_call.py --workspace $project $task
+$deniedLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+python -B -X utf8 tool_call.py --status $deniedLog.FullName
+```
+
+预期状态依次为 `running → waiting_approval → cancelled`，结束原因 `user_denied`；没有这次脚本的执行结果，没有后续模型请求。随后在同一终端重新运行这个任务，确认时输入 `y`：
+
+```powershell
+python -B -X utf8 tool_call.py --workspace $project $task
+$completedLog = Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1
+python -B -X utf8 tool_call.py --status $completedLog.FullName
+```
+
+预期 `running → waiting_approval → running → completed`，实际输出总和 30、平均值 10.0、最小值 5、最大值 15，停止原因与 `run_end.reason` 均为 `stop`，最后一条事件中的 `task_state` 为 `completed`。两次任务分别保存日志；查看状态时不调用模型、工具或申请授权，也不改写日志和数据库。
+
+也可以在等待确认时按 Ctrl+C：任务状态为 `cancelled`，结束原因 `cancelled`，不启动工具。`--status` 支持第 30 课之前的完整日志，但旧日志没有记录等待开始的时刻，无法补出这段过程。对有完整 JSON 行却没有 `run_end` 的日志，只显示最后保存的状态并提示结束未知，不能据此确认进程仍在运行；损坏的 JSON、事件顺序或状态不一致时拒绝推断。强制退出后的恢复和选择性重试留到第 31 课处理。
 
 ## 会话恢复
 
@@ -567,7 +615,9 @@ python -m unittest discover -s tests -v
 
 第 28 课新增 `tests/test_checkpoints.py` 的 25 项测试，共 169 项。覆盖精确字节、中文与 CRLF、二进制原文、多次写入、新建文件删除和无变化写入；后续修改、同内容重存、删除、路径重定向、只读固定文件、损坏元数据和确认后的变化都会拒绝危险恢复。实际临时 Git 仓库验证已暂存与未暂存内容、索引字节和用户未跟踪文件均保留。另覆盖拒绝与重复撤回、运行中禁止撤回、中断、存储失败及对应的 error 结束日志、部分写入/撤回失败、命令变更不归属，以及完整 CLI 修改、实际运行、查看、拒绝和确认撤回流程。模型响应使用模拟数据。
 
-第 29 课新增 `tests/test_sessions.py` 的 22 项测试，当前共 191 项通过。测试使用真实临时 SQLite，覆盖三种数据结构、中文内容、数据库版本、同 ID 续聊且不重复消息、历史工具不重放、授权不继承、只读预览与列表、跨项目和未知 ID 拒绝、实际子进程输出、工具失败与拒绝、超限未执行状态、异常与取消记录、旧 JSONL 兼容、事务回滚和过期写入拒绝。另在独立 Python 进程读取数据库，并移除临时 JSONL 验证恢复不依赖原日志。另验证空字符串和纯空白会话 ID 在读取凭据、调用模型和创建存储前被拒绝。模型响应使用模拟数据；首次真实读取与 SQLite 入库已验证，指定 ID 的真实续聊待重试。
+第 29 课新增 `tests/test_sessions.py` 的 22 项测试，累计 191 项通过。测试使用真实临时 SQLite，覆盖三种数据结构、中文内容、数据库版本、同 ID 续聊且不重复消息、历史工具不重放、授权不继承、只读预览与列表、跨项目和未知 ID 拒绝、实际子进程输出、工具失败与拒绝、超限未执行状态、异常与取消记录、旧 JSONL 兼容、事务回滚和过期写入拒绝。另在独立 Python 进程读取数据库，并移除临时 JSONL 验证恢复不依赖原日志。另验证空字符串和纯空白会话 ID 在读取凭据、调用模型和创建存储前被拒绝。模型响应使用模拟数据；跨进程恢复与同 ID 真实续聊已验证成功。
+
+第 30 课新增 `tests/test_tasks.py` 的 15 项测试，当前共 206 项通过。覆盖状态变化、确认前日志已刷新、实际子进程输出、拒绝后整批停止、自动读取不假装等待、工具失败后继续、请求次数超限、输出截断、请求异常、中断、结束后拒绝新的模型请求、只读状态查询、旧日志兼容和不完整日志不推断存活。状态回放也检查损坏记录、结束后的多余事件和状态不一致；原有 SQLite 会话与消息恢复保持兼容。模型响应使用模拟数据，真实模型验收待完成。
 
 ## 许可证
 
