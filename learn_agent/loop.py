@@ -19,12 +19,17 @@ MAX_MODEL_CALLS = 8
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
               budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False,
               denied_tools: tuple[str, ...] = (), plan_enabled: bool = False,
-              provider: ModelProvider | None = None) -> str:
+              provider: ModelProvider | None = None, extra_tools: tuple[tools.Tool, ...] = ()) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
     provider = provider if provider is not None else DeepSeekProvider()
     registry = dict(tools.TOOL_REGISTRY)
+    for tool in extra_tools:
+        name = tool.schema["function"]["name"]
+        if name in registry or name == "update_plan":
+            raise ValueError(f"外部工具 {name} 与已有工具重名，未请求模型。")
+        registry[name] = tool
     plan = TaskPlan(log_file) if plan_enabled else None
     if plan is not None:
         plan_tool = plan.as_tool()

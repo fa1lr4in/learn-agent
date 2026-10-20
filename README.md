@@ -44,8 +44,9 @@
 - 统一用 `PermissionPolicy` 判断允许、询问、拒绝；`--deny-tool NAME` 可重复指定并优先于自动读取，文件正文、模型回复和旧历史不能自行授权，日志区分策略拒绝与人工拒绝。
 - 支持 `--instructions FILE` 显式读取项目规则，记录路径、SHA-256 与原文快照；低于当前用户任务，不改变工具权限。支持 `--plan` 提供 `update_plan`，用本次工具结果更新步骤，未完成或证据过时则暂停。
 - 增加 `ModelProvider` / `DeepSeekProvider` 适配层，集中构造请求并将回复转为 `ModelResponse`；工具循环和语义摘要通过同一适配器调用模型，日志记录 provider，用量继续共用预算。
+- 支持 `--mcp-demo`：用官方 MCP Python SDK 经 stdio 连接独立的本地求和服务，发现工具并仅在本次运行中接入；外部工具逐次确认，支持明确禁用、参数检查、计划证据、日志和会话恢复。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
 
 ## 代码结构与工具注册
 
@@ -56,6 +57,8 @@ learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
   providers.py          ModelProvider / DeepSeekProvider / ModelResponse：请求构造与回复适配
+  mcp_client.py         连接本地 MCP 服务、发现工具并适配到本次工具表
+  mcp_demo_server.py    独立的 MCP stdio 求和服务
   streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
   budget.py             本次任务用量、耗时与预算检查，未知用量不按零处理
   context.py            上下文字符预算、长工具结果投影、成组历史选择与可追溯摘录
@@ -93,7 +96,7 @@ python tool_call.py --auto-read "请先在 demo_project/src 中搜索 summarize�
 
 ## 运行
 
-需要 Python 3.11 或更新版本，无第三方依赖。
+需要 Python 3.11 或更新版本。原有模型调用和内置工具使用标准库；可选的 MCP 示例需要安装 requirements.txt，下面的 MCP 小节给出独立 .venv 的安装命令。
 
 ```powershell
 # 预览请求
@@ -232,6 +235,66 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 预期同样直接拒绝、没有读取结果，最终 `cancelled / policy_denied`。若模型没有提出指定工具，不能把仅返回文字当作拦截验证成功，应以 `tool_approval.decision: deny` 为证据。
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
+
+## 接入本地 MCP 工具
+
+第 38 课用官方 MCP Python SDK 接入一个独立求和进程。learn-agent 是 Host，mcp_client.py 中的连接是 Client，mcp_demo_server.py 是 Server。Client 向 Server 查询工具列表，再把工具描述交给模型；模型提出普通工具请求后，Host 检查参数和权限，由 Client 转发调用，将结果放进后续模型请求。MCP 并非模型 API，也不要求把模型密钥交给工具服务。参考[官方客户端文档](https://py.sdk.modelcontextprotocol.io/client/)与[stdio 传输文档](https://py.sdk.modelcontextprotocol.io/client/transports/#stdio)。
+
+本次范围固定为项目自带的本地 stdio 服务，不读取任意第三方服务配置，也未实现 HTTP、资源、提示模板或多服务管理。SDK 负责协议协商与子进程生命周期，实际协议版本记入日志；工具列表分页会明确停止，不静默遗漏。协议请求与工具调用设置 10 秒等待上限，结束或取消后关闭连接，在 run_end 前完成清理；断开失败会记为 error。
+
+服务通过 tools/list 公开 sum_numbers，模型侧名称为 mcp_demo_sum_numbers。整数数组参数由发现的 input_schema 做本地 JSON Schema 校验，再进入既有权限流程。外部工具始终标记为需要确认，服务提供的只读提示、说明文字和 --auto-read 都不会自动授权；--deny-tool mcp_demo_sum_numbers 可明确禁用。本次工具表独立于全局 TOOL_REGISTRY，新任务只有显式带 --mcp-demo 才重新连接，旧历史不会重放工具。
+
+成功结果包含 content、structured_content 和 is_error，其中 structured_content 包含 count、total、server_pid；server_pid 是外部服务进程号。服务的 is_error 转为 ok: false 交给模型处理；连接错误也返回结构化失败，不当作成功证据。工具执行结果与内置工具共用日志、SQLite、预算检查和计划证据；MCP 通信本身不增加模型请求次数。服务进程使用 SDK 默认的最小环境，不继承 DEEPSEEK_API_KEY。
+
+先在项目根目录准备独立 Python 环境。当前工作区已由开发助手安装完成；从新克隆运行时执行：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+无需激活虚拟环境，直接使用其中的 Python。它继续读取已有的模型密钥环境变量：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$agentPython = '.\.venv\Scripts\python.exe'
+$mcpTask = @'
+请只调用 mcp_demo_sum_numbers，参数 values 为 [5, 10, 15]。
+必须使用工具真实结果，不自行计算代替调用，不读取、创建、修改或运行项目文件。
+拿到结果后用中文简要报告 count、total 和 server_pid。
+'@
+& $agentPython -B -X utf8 tool_call.py --mcp-demo --auto-read --stream $mcpTask
+```
+
+先看到服务连接与发现 mcp_demo_sum_numbers，再看到实际发送给模型的工具说明。即使带 --auto-read 仍会询问，输入 y 后应返回 ok: true、is_error: false，structured_content 中 count 为 3、total 为 30、server_pid 为实际进程号。模型根据结果回答，随后显示服务已断开，任务最终 completed / stop。检查本轮日志：
+
+```powershell
+$mcpLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$mcpEvents = @(Get-Content -LiteralPath $mcpLog -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+$mcpEvents[0].mcp_server | Format-List
+$mcpEvents | Where-Object { $_.event -eq 'tool_approval' -and $_.tool -eq 'mcp_demo_sum_numbers' } |
+    Select-Object tool, approved, source, decision
+$mcpEvents | Where-Object { $_.event -eq 'tool_result' -and $_.tool -eq 'mcp_demo_sum_numbers' } |
+    ForEach-Object { $_.result } | ConvertTo-Json -Depth 10
+& $agentPython -B -X utf8 tool_call.py --status $mcpLog
+```
+
+授权来源应为 user。再用同一任务验证明确禁用，预期不出现确认问题、没有 tool_result，结束为 cancelled / policy_denied：
+
+```powershell
+& $agentPython -B -X utf8 tool_call.py --mcp-demo --auto-read --stream --deny-tool mcp_demo_sum_numbers $mcpTask
+$mcpDeniedLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$mcpDeniedEvents = @(Get-Content -LiteralPath $mcpDeniedLog -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+"工具结果数：$(@($mcpDeniedEvents | Where-Object { $_.event -eq 'tool_result' }).Count)"
+& $agentPython -B -X utf8 tool_call.py --status $mcpDeniedLog
+```
+
+普通预览不会启动服务、联网或执行工具。--mcp-demo --preview 明确说明本次只展示内置工具；实际运行连接后才会打印发现的完整工具列表。恢复历史后如还需新 MCP 调用，应再次显式指定 --mcp-demo，并按本次权限确认。
 
 ## 模型适配接口
 
@@ -1171,6 +1234,8 @@ python -m unittest discover -s tests -v
 第 36 课计划反馈修复新增 6 项回归测试，累计 339 项通过。先复现旧实现缺少 evidence_id、错误反馈无可用清单，以及无法完成预期失败诊断，再修正。新增用例从返回正文动态发现编号，不预先替模型写好证据；覆盖错误引用后按清单修正、真实失败验收—历史诊断完成—局部修复—通过验收的完整流程、失败诊断在修复后保留，以及无执行/超时/截断/清理失败/错误结果不能冒充预期失败。原有默认成功与过时证据拦截继续通过。上述恢复命令也已在 Windows PowerShell 5.1 验证：复制使用者的暂停日志与正确项目，在副本重新读取、两次确认执行、4 项测试通过、入口 5050、计划全部完成、最终 completed / stop；使用模拟模型网络和真实 SSE 读取、SQLite 保存，原文件与日志未改动，不调用付费 API。使用者随后已真实复验：8 次模型请求、4 次计划更新、3 项步骤全部 completed，证据编号与工具结果逐一对应，2 次执行由 user 确认，无 PlanError，最终 completed / stop；验收文件与首轮读取内容一致。
 
 第 37 课新增 `tests/test_providers.py` 的 12 项测试，累计 351 项通过。重构前 339 项基线通过；重构后覆盖 DeepSeek 请求配置、JSON/SSE 统一回复、完整工具参数、结束原因、缺失用量仍未知、无效回复与 HTTP 错误，以及另一种回复格式经模拟适配器完成真实文件读取、人工授权运行、流式事件、预算暂停、SQLite/JSONL 恢复和语义摘要共用预算。既有测试只调整模型模拟入口及摘要输入类型，原有行为断言继续执行。上述 PowerShell 命令已在 Windows PowerShell 5.1 的独立副本验证：真实读取与执行、四项测试通过、入口 5050、两次人工确认、计划全部完成、provider=deepseek、SQLite 保存和 completed / stop；网络使用模拟 HTTP/SSE，没有调用付费 API。使用者随后已真实验证本次适配：日志 run-20261020-153801-052499.jsonl 记录 provider=deepseek、4 次计划更新、三项全部 completed，两次执行由 user 确认，4 项测试通过、入口 stdout 为 5050，无工具错误，源码与前轮读取内容一致；8 次任务请求、摘要请求为 0，累计 35145 token、用量完整，最终 completed / stop。第二家服务仍仅接口模拟，适配后的语义摘要本轮未触发，保留离线测试结论。
+
+第 38 课新增 tests/test_mcp.py 的 19 项测试，使用 .venv Python 执行全部 370 项通过；修改前的 351 项基线通过。覆盖真实 SDK stdio 服务的工具发现、结构化结果与独立进程号、正常和超时后的进程退出、子进程不继承模型密钥、JSON Schema 嵌套类型校验、整批参数拦截、--auto-read 下仍需确认、人工拒绝与明确禁用、服务 is_error 后调整参数重试、预算暂停、计划证据、SQLite/JSONL 恢复不重放、取消确认后重新授权、默认关闭、无依赖的预览与友好报错、工具重名和分页拒绝、清理失败记录为 error。README 正常与禁用两组命令已在 Windows PowerShell 5.1 的独立副本运行：MCP 服务和 SDK 为真实调用，模型网络用模拟 HTTP/SSE，正常 count=3、total=30、服务进程退出且 completed / stop，禁用无工具结果且 cancelled / policy_denied，SQLite 正常保存，没有调用付费模型 API。真实 DeepSeek 与 MCP 配合待使用者复验；系统 Python 未安装可选 SDK 时会跳过 14 项 MCP 集成测试，可用 .\.venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests -v 执行完整验证。
 
 ## 许可证
 
