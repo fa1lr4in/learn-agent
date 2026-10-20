@@ -26,7 +26,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_tool_result_is_paired_and_sent_with_history(self):
         final = {"choices": [{"message": {"content": "test answer"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                 loop.run_agent(self.payload, "offline-placeholder")
         self.assertEqual(model.call_count, 2)
@@ -46,7 +46,7 @@ class ToolCallTests(unittest.TestCase):
         second_call["id"] = "call_next"
         second_call["function"]["arguments"] = json.dumps({"path": "next_step.txt"})
         final = {"choices": [{"message": {"content": "汇总完成。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, second, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, second, final]) as model:
             with patch("learn_agent.tools.read_file", side_effect=["项目资料", "下一步任务"]) as reader:
                 with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -94,7 +94,7 @@ class ToolCallTests(unittest.TestCase):
         listing_call["id"] = "call_list"
         listing_call["function"] = {"name": "list_files", "arguments": "{}"}
         final = {"choices": [{"message": {"content": "项目叫小灯。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[listing, self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[listing, self.response, final]) as model:
             with patch("learn_agent.tools.list_files", return_value=["project.txt"]) as lister:
                 with patch("learn_agent.tools.read_file", return_value="项目名称：小灯") as reader:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
@@ -122,7 +122,7 @@ class ToolCallTests(unittest.TestCase):
         second["choices"][0]["message"]["tool_calls"].append(next_call)
         final = {"choices": [{"message": {"content": "汇总完成。"}, "finish_reason": "stop"}]}
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[listing, second, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[listing, second, final]) as model:
             with patch("learn_agent.tools.list_files", return_value=["project.txt", "next_step.txt"]):
                 with patch("learn_agent.tools.read_file", side_effect=["项目资料", "下一步任务"]) as reader:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
@@ -189,7 +189,7 @@ class ToolCallTests(unittest.TestCase):
             for name, source in sources.items():
                 (workspace / name).write_text(source, encoding="utf-8")
             with patch.object(permissions, "WORKSPACE", workspace):
-                with patch("learn_agent.loop.call_model", side_effect=responses) as model:
+                with patch("learn_agent.providers.call_model", side_effect=responses) as model:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                         loop.run_agent(self.payload, "offline-placeholder")
             self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content)
@@ -230,7 +230,7 @@ class ToolCallTests(unittest.TestCase):
             log_dir = workspace / "logs"
             with patch.object(permissions, "WORKSPACE", workspace), patch.object(tool_call, "LOG_DIR", log_dir):
                 with patch.object(sys, "argv", ["tool_call.py", "--auto-read"]), patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                    with patch("learn_agent.loop.call_model", side_effect=responses) as model:
+                    with patch("learn_agent.providers.call_model", side_effect=responses) as model:
                         with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                             tool_call.main()
             self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content)
@@ -254,7 +254,7 @@ class ToolCallTests(unittest.TestCase):
             workspace = Path(directory)
             self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
             (workspace / "report.md").write_text("旧报告", encoding="utf-8")
-            with patch.object(permissions, "WORKSPACE", workspace), patch("learn_agent.loop.call_model", return_value=self.response) as model:
+            with patch.object(permissions, "WORKSPACE", workspace), patch("learn_agent.providers.call_model", return_value=self.response) as model:
                 with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                     reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
             self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), "旧报告")
@@ -278,7 +278,7 @@ class ToolCallTests(unittest.TestCase):
         for name, arguments in invalid:
             with self.subTest(name=name, arguments=arguments):
                 self.request["tool_calls"][0]["function"] = {"name": name, "arguments": json.dumps(arguments)}
-                with patch("learn_agent.loop.call_model", return_value=self.response), patch("builtins.input") as approval:
+                with patch("learn_agent.providers.call_model", return_value=self.response), patch("builtins.input") as approval:
                     with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister, patch("learn_agent.tools.write_file") as writer:
                         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                             loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -289,7 +289,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_auto_read_returns_file_error_to_model_without_confirmation(self):
         final = {"choices": [{"message": {"content": "读取失败。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
             with patch("learn_agent.tools.read_file", side_effect=FileNotFoundError()), patch("builtins.input") as approval:
                 with contextlib.redirect_stdout(io.StringIO()):
                     reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -305,7 +305,7 @@ class ToolCallTests(unittest.TestCase):
             self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
             log_dir = Path(directory) / "logs"
             with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "--preview"]):
-                with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                     with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister, patch("learn_agent.tools.write_file") as writer:
                         with contextlib.redirect_stdout(io.StringIO()):
                             tool_call.main()
@@ -326,7 +326,7 @@ class ToolCallTests(unittest.TestCase):
                 with self.subTest(answer=answer):
                     (workspace / "report.md").write_text("旧报告", encoding="utf-8")
                     with patch.object(permissions, "WORKSPACE", workspace):
-                        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+                        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
                             with patch("builtins.input", return_value=answer) as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                                 loop.run_agent(self.payload, "offline-placeholder")
                     self.assertEqual((workspace / "report.md").read_text(encoding="utf-8"), content if answer == "y" else "旧报告")
@@ -348,7 +348,7 @@ class ToolCallTests(unittest.TestCase):
         for arguments in invalid:
             with self.subTest(arguments=arguments):
                 self.request["tool_calls"][0]["function"] = {"name": "write_file", "arguments": json.dumps(arguments)}
-                with patch("learn_agent.loop.call_model", return_value=self.response), patch("learn_agent.tools.write_file") as writer:
+                with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.tools.write_file") as writer:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder")
                 writer.assert_not_called()
@@ -359,7 +359,7 @@ class ToolCallTests(unittest.TestCase):
             "name": "write_file", "arguments": json.dumps({"path": "report.md", "content": "报告"}),
         }
         final = {"choices": [{"message": {"content": "保存失败。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
             with patch("learn_agent.tools.write_file", side_effect=PermissionError("private-local-path")):
                 with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -373,7 +373,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_list_files_rejects_arguments_before_confirmation(self):
         self.request["tool_calls"][0]["function"] = {"name": "list_files", "arguments": '{"path":".."}'}
-        with patch("learn_agent.loop.call_model", return_value=self.response), patch("learn_agent.tools.list_files") as lister:
+        with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.tools.list_files") as lister:
             with patch("builtins.input") as approval:
                 with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -383,7 +383,7 @@ class ToolCallTests(unittest.TestCase):
     def test_list_failure_is_returned_as_tool_result(self):
         self.request["tool_calls"][0]["function"] = {"name": "list_files", "arguments": "{}"}
         final = {"choices": [{"message": {"content": "无法列出文件。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
             with patch("learn_agent.tools.list_files", side_effect=PermissionError()):
                 with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -401,7 +401,7 @@ class ToolCallTests(unittest.TestCase):
         final = {"choices": [{"message": {"content": "读取失败。"}, "finish_reason": "stop"}]}
         for error in errors:
             with self.subTest(error=type(error).__name__):
-                with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
                     with patch("learn_agent.tools.read_file", side_effect=error):
                         with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                             loop.run_agent(self.payload, "offline-placeholder")
@@ -421,7 +421,7 @@ class ToolCallTests(unittest.TestCase):
         first["choices"][0]["message"]["tool_calls"][0]["id"] = "call_missing"
         first["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "next_step.txt"})
         final = {"choices": [{"message": {"content": "已根据项目资料回答。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", side_effect=[first, self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[first, self.response, final]) as model:
             with patch("learn_agent.tools.read_file", side_effect=[FileNotFoundError(), "项目名称：小灯"]) as reader:
                 with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -435,7 +435,7 @@ class ToolCallTests(unittest.TestCase):
         self.assertEqual(succeeded["content"], "项目名称：小灯")
 
     def test_repeated_read_errors_still_respect_request_limit(self):
-        with patch("learn_agent.loop.call_model", return_value=self.response) as model:
+        with patch("learn_agent.providers.call_model", return_value=self.response) as model:
             with patch("learn_agent.tools.read_file", side_effect=FileNotFoundError()) as reader:
                 with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()) as output:
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -445,7 +445,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_limit_stops_before_executing_another_tool(self):
         with patch.object(loop, "MAX_MODEL_CALLS", 3):
-            with patch("learn_agent.loop.call_model", return_value=self.response) as model:
+            with patch("learn_agent.providers.call_model", return_value=self.response) as model:
                 with patch("learn_agent.tools.read_file", return_value="项目资料") as reader:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                         loop.run_agent(self.payload, "offline-placeholder")
@@ -459,7 +459,7 @@ class ToolCallTests(unittest.TestCase):
             with self.subTest(name=name):
                 response = copy.deepcopy(self.response)
                 response["choices"][0]["message"]["tool_calls"][0]["function"] = {"name": name, "arguments": arguments}
-                with patch("learn_agent.loop.call_model", return_value=response) as model:
+                with patch("learn_agent.providers.call_model", return_value=response) as model:
                     with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister:
                         with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
                             loop.run_agent(self.payload, "offline-placeholder")
@@ -469,7 +469,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_text_reply_does_not_execute_tool_or_ask_for_confirmation(self):
         response = {"choices": [{"message": {"role": "assistant", "content": "你好。"}, "finish_reason": "stop"}]}
-        with patch("learn_agent.loop.call_model", return_value=response) as model, patch("learn_agent.tools.read_file") as reader:
+        with patch("learn_agent.providers.call_model", return_value=response) as model, patch("learn_agent.tools.read_file") as reader:
             with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                 loop.run_agent(self.payload, "offline-placeholder")
         model.assert_called_once()
@@ -483,7 +483,7 @@ class ToolCallTests(unittest.TestCase):
         ]:
             with self.subTest(arguments=arguments):
                 with patch.object(sys, "argv", ["tool_call.py", "--preview", *arguments]):
-                    with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                    with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                         with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister, patch("learn_agent.tools.write_file") as writer, contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
                 payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])
@@ -496,7 +496,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_unapproved_path_is_rejected_before_confirmation(self):
         self.request["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": "../chat.py"})
-        with patch("learn_agent.loop.call_model", return_value=self.response), patch("builtins.input") as approval:
+        with patch("learn_agent.providers.call_model", return_value=self.response), patch("builtins.input") as approval:
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                 loop.run_agent(self.payload, "offline-placeholder")
         approval.assert_not_called()
@@ -506,7 +506,7 @@ class ToolCallTests(unittest.TestCase):
             with self.subTest(name=name, arguments=arguments):
                 response = copy.deepcopy(self.response)
                 response["choices"][0]["message"]["tool_calls"][0]["function"] = {"name": name, "arguments": arguments}
-                with patch("learn_agent.loop.call_model", return_value=response), patch("learn_agent.tools.read_file") as reader:
+                with patch("learn_agent.providers.call_model", return_value=response), patch("learn_agent.tools.read_file") as reader:
                     with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder")
                 reader.assert_not_called()
@@ -516,7 +516,7 @@ class ToolCallTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 response = copy.deepcopy(self.response)
                 response["choices"][0]["finish_reason"] = reason
-                with patch("learn_agent.loop.call_model", return_value=response) as model, patch("learn_agent.tools.read_file") as reader:
+                with patch("learn_agent.providers.call_model", return_value=response) as model, patch("learn_agent.tools.read_file") as reader:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                         loop.run_agent(self.payload, "offline-placeholder")
                 model.assert_called_once()
@@ -526,7 +526,7 @@ class ToolCallTests(unittest.TestCase):
 
     def test_duplicate_call_ids_are_rejected_before_execution(self):
         self.request["tool_calls"].append(copy.deepcopy(self.request["tool_calls"][0]))
-        with patch("learn_agent.loop.call_model", return_value=self.response), patch("learn_agent.tools.read_file") as reader:
+        with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.tools.read_file") as reader:
             with patch("builtins.input") as approval:
                 with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -540,7 +540,7 @@ class ToolCallTests(unittest.TestCase):
         self.request["tool_calls"].append(next_call)
         final = {"choices": [{"message": {"content": "已说明读取结果。"}, "finish_reason": "stop"}]}
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]) as model:
             with patch("learn_agent.tools.read_file", side_effect=[FileNotFoundError(), "下一步任务"]) as reader:
                 with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                     reason = loop.run_agent(self.payload, "offline-placeholder", log_file)
@@ -566,7 +566,7 @@ class ToolCallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="learn-agent-test-") as directory:
             workspace = Path(directory)
             self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
-            with patch.object(permissions, "WORKSPACE", workspace), patch("learn_agent.loop.call_model", return_value=self.response) as model:
+            with patch.object(permissions, "WORKSPACE", workspace), patch("learn_agent.providers.call_model", return_value=self.response) as model:
                 with patch("learn_agent.tools.read_file") as reader, patch("builtins.input", side_effect=["y", "n"]) as approval:
                     with contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
@@ -590,7 +590,7 @@ class ToolCallTests(unittest.TestCase):
                 response["choices"][0]["message"]["tool_calls"].append({
                     "id": "call_invalid", "type": "function", "function": {"name": name, "arguments": arguments},
                 })
-                with patch("learn_agent.loop.call_model", return_value=response), patch("learn_agent.tools.read_file") as reader:
+                with patch("learn_agent.providers.call_model", return_value=response), patch("learn_agent.tools.read_file") as reader:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 reader.assert_not_called()
@@ -603,7 +603,7 @@ class ToolCallTests(unittest.TestCase):
         for finish_reason, expected in [("tool_calls", "max_model_calls"), ("length", "abnormal_finish")]:
             with self.subTest(finish_reason=finish_reason):
                 self.response["choices"][0]["finish_reason"] = finish_reason
-                with patch.object(loop, "MAX_MODEL_CALLS", 1), patch("learn_agent.loop.call_model", return_value=self.response) as model:
+                with patch.object(loop, "MAX_MODEL_CALLS", 1), patch("learn_agent.providers.call_model", return_value=self.response) as model:
                     with patch("learn_agent.tools.read_file") as reader, patch("builtins.input") as approval:
                         with contextlib.redirect_stdout(io.StringIO()):
                             reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -624,7 +624,7 @@ class ToolCallTests(unittest.TestCase):
                 log_dir = Path(directory) / "logs"
                 with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
                     with patch("tool_call.get_api_key", return_value="offline-sensitive-test-key"):
-                        with patch("learn_agent.loop.call_model", side_effect=[self.response, final]):
+                        with patch("learn_agent.providers.call_model", side_effect=[self.response, final]):
                             with patch("learn_agent.tools.read_file", return_value="项目名称：小灯\n实验编号：7391", side_effect=None if succeeds else FileNotFoundError()):
                                 with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                                     tool_call.main()
@@ -658,7 +658,7 @@ class ToolCallTests(unittest.TestCase):
             log_dir = Path(directory) / "logs"
             with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
                 with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                    with patch("learn_agent.loop.call_model", return_value=self.response) as model, patch("learn_agent.tools.read_file") as reader:
+                    with patch("learn_agent.providers.call_model", return_value=self.response) as model, patch("learn_agent.tools.read_file") as reader:
                         with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
                             tool_call.main()
             entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
@@ -675,7 +675,7 @@ class ToolCallTests(unittest.TestCase):
                 log_dir = Path(directory) / "logs"
                 with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py"]):
                     with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                        with patch("learn_agent.loop.call_model", side_effect=error), contextlib.redirect_stdout(io.StringIO()):
+                        with patch("learn_agent.providers.call_model", side_effect=error), contextlib.redirect_stdout(io.StringIO()):
                             with self.assertRaises(SystemExit):
                                 tool_call.main()
                 text = next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8")
@@ -694,7 +694,7 @@ class ToolCallTests(unittest.TestCase):
                 response["choices"][0]["finish_reason"] = finish_reason
                 with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(loop, "MAX_MODEL_CALLS", 1):
                     with patch.object(sys, "argv", ["tool_call.py"]), patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                        with patch("learn_agent.loop.call_model", return_value=response) as model:
+                        with patch("learn_agent.providers.call_model", return_value=response) as model:
                             with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                                 tool_call.main()
                 entries = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
@@ -709,7 +709,7 @@ class ToolCallTests(unittest.TestCase):
             self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
             log_dir = Path(directory) / "logs"
             with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "你好"]):
-                with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.loop.call_model", return_value=final):
+                with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.providers.call_model", return_value=final):
                     with contextlib.redirect_stdout(io.StringIO()):
                         tool_call.main()
                         tool_call.main()
@@ -725,7 +725,7 @@ class ToolCallTests(unittest.TestCase):
             self.assertEqual(Path(directory).resolve().parent, Path(tempfile.gettempdir()).resolve())
             log_dir = Path(directory) / "logs"
             with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--preview"]):
-                with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                     with contextlib.redirect_stdout(io.StringIO()):
                         tool_call.main()
             self.assertFalse(log_dir.exists())

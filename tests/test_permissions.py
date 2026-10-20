@@ -56,7 +56,7 @@ class PermissionTests(unittest.TestCase):
         with patch.object(tool_call, "LOG_DIR", self.logs):
             with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), *args, "验证权限"]):
                 with patch("tool_call.get_api_key", return_value="offline-permission-key") as key:
-                    with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+                    with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                         with patch("builtins.input", return_value=answer) as approval:
                             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
                                 if error:

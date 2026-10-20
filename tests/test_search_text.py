@@ -141,7 +141,7 @@ class SearchTextTests(unittest.TestCase):
         log_dir = self.root / "logs"
         before = {name: (self.workspace / name).read_bytes() for name in self.sources}
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "搜索定位"]):
-            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.loop.call_model", side_effect=replies):
+            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.providers.call_model", side_effect=replies):
                 with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.apply_edit") as editor, patch("learn_agent.tools.run_python") as runner:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         tool_call.main()
@@ -163,7 +163,7 @@ class SearchTextTests(unittest.TestCase):
         reply = self.response([("search", "search_text", {"query": "summarize"})])
         for answer in ("y", "n"):
             with self.subTest(answer=answer):
-                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                     with patch("learn_agent.tools.search_text", return_value={"matches": [], "truncated": False}) as search:
                         with patch("builtins.input", return_value=answer) as approval, contextlib.redirect_stdout(io.StringIO()):
                             reason = loop.run_agent(self.payload, "offline-placeholder")
@@ -183,7 +183,7 @@ class SearchTextTests(unittest.TestCase):
         for arguments in invalid:
             with self.subTest(arguments=arguments):
                 reply = self.response([("bad", "search_text", arguments)])
-                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.tools.search_text") as search:
+                with patch("learn_agent.providers.call_model", return_value=reply), patch("learn_agent.tools.search_text") as search:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 search.assert_not_called()
@@ -196,7 +196,7 @@ class SearchTextTests(unittest.TestCase):
         for path in ("missing", "demo/main.py"):
             with self.subTest(path=path):
                 reply = self.response([("error", "search_text", {"query": "word", "path": path})])
-                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
@@ -216,7 +216,7 @@ class SearchTextTests(unittest.TestCase):
 
     def test_preview_advertises_search_without_key_network_or_file_search(self):
         with patch.object(sys, "argv", ["tool_call.py", "--preview"]), patch.object(tool_call, "LOG_DIR", self.root / "logs"):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.search_text") as search:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model, patch("learn_agent.tools.search_text") as search:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

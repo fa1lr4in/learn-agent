@@ -107,7 +107,7 @@ class CommandTests(unittest.TestCase):
         for arguments in cases:
             with self.subTest(arguments=arguments):
                 reply = self.response([("invalid", "run_command", arguments)])
-                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.commands.subprocess.Popen") as process:
+                with patch("learn_agent.providers.call_model", return_value=reply), patch("learn_agent.commands.subprocess.Popen") as process:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 process.assert_not_called()
@@ -190,7 +190,7 @@ class CommandTests(unittest.TestCase):
     def test_auto_read_still_requires_confirmation_and_denial_stops(self):
         reply = self.response([("command", "run_command", {"command": ["python", "main.py"]})])
         log = io.StringIO()
-        with patch("learn_agent.loop.call_model", return_value=reply) as model, patch("learn_agent.commands.subprocess.Popen") as process:
+        with patch("learn_agent.providers.call_model", return_value=reply) as model, patch("learn_agent.commands.subprocess.Popen") as process:
             with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log, auto_read=True)
         self.assertEqual(reason, "user_denied")
@@ -203,7 +203,7 @@ class CommandTests(unittest.TestCase):
     def test_invalid_later_call_blocks_entire_batch(self):
         reply = self.response([("valid", "run_command", {"command": ["python", "main.py"]}),
                                ("invalid", "run_command", {"command": ["python"], "path": "../outside"})])
-        with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.commands.subprocess.Popen") as process:
+        with patch("learn_agent.providers.call_model", return_value=reply), patch("learn_agent.commands.subprocess.Popen") as process:
             with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                 loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         process.assert_not_called()
@@ -215,7 +215,7 @@ class CommandTests(unittest.TestCase):
         logs = self.root / "logs"
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), "--auto-read", "验证"]):
             with patch.object(tool_call, "LOG_DIR", logs), patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                         tool_call.main()
         self.assertEqual(approval.call_count, 2)
@@ -233,7 +233,7 @@ class CommandTests(unittest.TestCase):
         logs = self.root / "logs"
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), "--preview"]):
             with patch.object(tool_call, "LOG_DIR", logs), patch("tool_call.get_api_key") as key:
-                with patch("learn_agent.loop.call_model") as model, patch("learn_agent.commands.subprocess.Popen") as process:
+                with patch("learn_agent.providers.call_model") as model, patch("learn_agent.commands.subprocess.Popen") as process:
                     with contextlib.redirect_stdout(io.StringIO()) as output:
                         tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

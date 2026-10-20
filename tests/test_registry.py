@@ -49,7 +49,7 @@ class ToolRegistryTests(unittest.TestCase):
             log_dir = Path(directory) / "logs"
             with patch.object(tool_call, "LOG_DIR", log_dir), patch("builtins.input") as approval:
                 with patch.object(sys, "argv", ["tool_call.py", "--preview", "返回文本"]):
-                    with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                    with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                         with contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
                 preview = json.loads(output.getvalue().split("\n", 1)[1].split("\n\n预览结束", 1)[0])
@@ -62,7 +62,7 @@ class ToolRegistryTests(unittest.TestCase):
 
                 with patch.object(sys, "argv", ["tool_call.py", "--auto-read", "返回文本"]):
                     with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                        with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                        with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                             with contextlib.redirect_stdout(io.StringIO()):
                                 tool_call.main()
                 events = [json.loads(line) for line in next(log_dir.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
@@ -85,7 +85,7 @@ class ToolRegistryTests(unittest.TestCase):
     def test_new_tool_requires_confirmation_by_default(self):
         tools.register_tool(self.echo_tool())
         reply = self.response([("echo-1", "echo", {"text": "你好"})])
-        with patch("learn_agent.loop.call_model", return_value=reply) as model:
+        with patch("learn_agent.providers.call_model", return_value=reply) as model:
             with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "user_denied")
@@ -98,7 +98,7 @@ class ToolRegistryTests(unittest.TestCase):
         for arguments in ({}, {"text": "你好", "extra": True}, {"text": 123}):
             with self.subTest(arguments=arguments):
                 reply = self.response([("read-1", "read_file", {"path": "project.txt"}), ("echo-1", "echo", arguments)])
-                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.tools.read_file") as reader:
+                with patch("learn_agent.providers.call_model", return_value=reply), patch("learn_agent.tools.read_file") as reader:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 reader.assert_not_called()

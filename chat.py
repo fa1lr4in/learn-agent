@@ -2,10 +2,10 @@
 
 import argparse
 import json
-import os
 import urllib.error
 
 from learn_agent.model import call_model, get_api_key
+from learn_agent.providers import DeepSeekProvider
 
 
 def main() -> None:
@@ -19,13 +19,7 @@ def main() -> None:
         {"role": "system", "content": "你是一位编程老师，用简洁的中文回答问题。"},
         {"role": "user", "content": args.prompt},
     ]
-    payload = {
-        "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
-        "messages": messages,
-        "stream": False,
-        "thinking": {"type": "disabled"},
-        "max_tokens": 512,
-    }
+    payload = DeepSeekProvider().build_request(messages, max_tokens=512)
 
     print("\n[发送给模型的请求体]")
     print(json.dumps(payload, ensure_ascii=False, indent=2))

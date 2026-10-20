@@ -12,6 +12,7 @@ import tool_call
 from learn_agent.compaction import parse_summary
 from learn_agent.context import context_size
 from learn_agent.model import call_model
+from learn_agent.providers import DeepSeekProvider
 from learn_agent.recovery import load_recovery
 from learn_agent.sessions import SessionStore
 from learn_agent.tasks import replay_events
@@ -27,7 +28,7 @@ def response(message, finish="stop", usage=None):
 
 class SummaryValidationTests(unittest.TestCase):
     def test_complete_structured_summary_is_accepted(self):
-        self.assertEqual(parse_summary(response({"content": json.dumps(SUMMARY)})), SUMMARY)
+        self.assertEqual(parse_summary(DeepSeekProvider.parse_response(response({"content": json.dumps(SUMMARY)}))), SUMMARY)
 
     def test_truncated_tool_or_invalid_json_reply_is_rejected(self):
         replies = [response({"content": json.dumps(SUMMARY)}, "length"),
@@ -36,14 +37,14 @@ class SummaryValidationTests(unittest.TestCase):
                    response({"content": None}), {"choices": []}]
         for reply in replies:
             with self.subTest(reply=reply), self.assertRaises(ValueError):
-                parse_summary(reply)
+                parse_summary(DeepSeekProvider.parse_response(reply))
 
     def test_missing_fields_wrong_types_and_empty_goal_are_rejected(self):
         cases = [{}, {**SUMMARY, "extra": True}, {**SUMMARY, "goal": " "}, {**SUMMARY, "next_step": None},
                  {**SUMMARY, "pending": "运行入口"}, {**SUMMARY, "evidence": [42]}]
         for data in cases:
             with self.subTest(data=data), self.assertRaises(ValueError):
-                parse_summary(response({"content": json.dumps(data)}))
+                parse_summary(DeepSeekProvider.parse_response(response({"content": json.dumps(data)})))
 
 
 class SemanticCompactionTests(unittest.TestCase):
@@ -95,7 +96,7 @@ class SemanticCompactionTests(unittest.TestCase):
         argv = ["tool_call.py", "--workspace", str(self.project), "--auto-read", "--context-chars", "9000",
                 *(["--semantic-compact"] if semantic else []), *args, "核对资料，保留未完成事项，不修改文件；运行入口后简要回答。"]
         with patch.object(sys, "argv", argv), patch("tool_call.get_api_key", return_value="offline-sensitive-key") as key:
-            with patch("learn_agent.loop.call_model", side_effect=replies) as model, patch("learn_agent.compaction.call_model", model):
+            with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                 with patch("builtins.input", return_value="y") as approval:
                     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
                         if error:

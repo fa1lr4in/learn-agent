@@ -44,7 +44,7 @@ class SessionTests(unittest.TestCase):
     def run_cli(self, arguments, replies=(), answers=(), workspace=None):
         argv = ["tool_call.py", "--workspace", str(workspace or self.project), *arguments]
         with patch.object(sys, "argv", argv), patch("tool_call.get_api_key", return_value="offline-private-key") as key:
-            with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+            with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                 with patch("builtins.input", side_effect=answers) as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         return model, key, approval, output.getvalue()
@@ -155,7 +155,7 @@ class SessionTests(unittest.TestCase):
         before = self.store.path.read_bytes()
         for session_id, workspace in (("missing", self.project), (saved.id, other)):
             with self.subTest(session=session_id, workspace=workspace):
-                with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                     with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(workspace), "--session", session_id, "继续"]):
                         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
                             tool_call.main()
@@ -272,7 +272,7 @@ class SessionTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(self.store.path)) as database, database:
             database.execute("PRAGMA user_version = 99")
         before = self.store.path.read_bytes()
-        with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+        with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
             with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), "回答"]):
                 with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(SystemExit, "版本 99"):
                     tool_call.main()
@@ -322,7 +322,7 @@ class SessionTests(unittest.TestCase):
                         arguments.append("--preview")
                     arguments.append("根据历史回答")
                     with patch.object(sys, "argv", arguments), patch("tool_call.get_api_key") as key:
-                        with patch("learn_agent.loop.call_model") as model:
+                        with patch("learn_agent.providers.call_model") as model:
                             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
                                 with self.assertRaises(SystemExit) as stopped:
                                     tool_call.main()

@@ -43,8 +43,9 @@
 - 支持 `--semantic-compact`：裁剪后仍超限时调用 DeepSeek 生成结构化语义摘要，同次运行复用并按需合并新记录；摘要请求与任务请求共用次数和 token 预算，摘要失败或超限时明确停止。
 - 统一用 `PermissionPolicy` 判断允许、询问、拒绝；`--deny-tool NAME` 可重复指定并优先于自动读取，文件正文、模型回复和旧历史不能自行授权，日志区分策略拒绝与人工拒绝。
 - 支持 `--instructions FILE` 显式读取项目规则，记录路径、SHA-256 与原文快照；低于当前用户任务，不改变工具权限。支持 `--plan` 提供 `update_plan`，用本次工具结果更新步骤，未完成或证据过时则暂停。
+- 增加 `ModelProvider` / `DeepSeekProvider` 适配层，集中构造请求并将回复转为 `ModelResponse`；工具循环和语义摘要通过同一适配器调用模型，日志记录 provider，用量继续共用预算。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课首轮真实任务已修复源码、通过四项验收并输出 5050，但证据引用不清晰与失败诊断语义导致计划未闭环；已补证据字段、可用清单和预期失败诊断，新增 6 项回归，当前累计 339 项测试通过，真实计划复验待反馈。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已加入模型适配接口与统一回复，新增 12 项测试，累计 351 项通过；PowerShell 命令已离线验证，真实 DeepSeek 复验待反馈。
 
 ## 代码结构与工具注册
 
@@ -54,6 +55,7 @@ tool_call.py            Agent 命令行入口：参数、请求配置、日志�
 learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
+  providers.py          ModelProvider / DeepSeekProvider / ModelResponse：请求构造与回复适配
   streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
   budget.py             本次任务用量、耗时与预算检查，未知用量不按零处理
   context.py            上下文字符预算、长工具结果投影、成组历史选择与可追溯摘录
@@ -73,7 +75,7 @@ tests/                  使用临时目录和模拟模型响应的自动化测�
 workspace/              Agent 可以操作的练习目录
 ```
 
-两个入口共用 `model.py`，Agent 入口调用 `loop.run_agent()`。循环通过工具名称从 `TOOL_REGISTRY` 取出 `Tool`，先校验整批请求，再按统一策略判断权限；明确拒绝时不进入工具准备，其他操作依次准备、自动允许或人工确认、执行并记录结果，将结果放进下一轮消息。
+两个入口共用 `DeepSeekProvider.build_request()` 构造请求。`model.py` 保留现有 DeepSeek HTTP/SSE 传输与本地密钥读取；`chat.py` 继续展示原始回复 JSON，Agent 入口把适配器传入 `loop.run_agent()`，循环只读取统一回复的 message、finish_reason、usage。循环通过工具名称从 `TOOL_REGISTRY` 取出 `Tool`，先校验整批请求，再按统一策略判断权限；明确拒绝时不进入工具准备，其他操作依次准备、自动允许或人工确认、执行并记录结果，将结果放进下一轮消息。
 
 每个 `Tool` 一起登记五项信息：`schema` 是给模型看的名称、说明和参数；`validate` 检查参数值与路径；`prepare` 生成 `PreparedTool`，保存确认提示与待执行函数；`read_only` 决定能否被 `--auto-read` 自动允许；`internal` 表示仅更新程序内部状态、无需人工确认的工具。后两项默认均为 `False`，由本地开发者登记，明确禁用优先。准备编辑时只读取原文并展示差异，真正写入放在确认后的 `execute()` 中。
 
@@ -230,6 +232,69 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 预期同样直接拒绝、没有读取结果，最终 `cancelled / policy_denied`。若模型没有提出指定工具，不能把仅返回文字当作拦截验证成功，应以 `tool_approval.decision: deny` 为证据。
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
+
+## 模型适配接口
+
+第 37 课把请求构造、服务回复解析与任务执行分开。`ModelProvider` 约定两个方法：`build_request()` 构造消息、工具、流式或 JSON 摘要请求，`complete()` 负责调用并返回统一的 `ModelResponse`。内部继续使用包含 messages、model、stream 等字段的请求字典；以后协议不同的服务需要在适配器中转换。
+
+`DeepSeekProvider` 集中处理 DEEPSEEK_MODEL、thinking 与 JSON 模式等选项；通过现有 model.py 传输和 streaming.py 拼接流式回复，再将 choices 转成 message、finish_reason、usage。循环与摘要不再自行访问 choices 或写入 DeepSeek 专有参数。缺少用量仍表示未知，不补成 0；格式无效时抛出 ValueError，HTTP/连接错误沿用 OSError 体系且不自动重试。完整结束前仍不会执行工具。
+
+任务请求和摘要请求使用同一个适配器，摘要仍为无工具、非流式的结构化 JSON 调用，共用 RunBudget。ModelResponse.as_dict() 保持既有日志中的 choices/message 格式，保留服务返回的顶层元信息，已有 JSONL 和 SQLite 历史可以继续恢复。run_start 增加 provider 字段，终端显示 `[模型适配器] deepseek`。
+
+当前仅接入 DeepSeek 官方服务，继续读取已有 DEEPSEEK_API_KEY，无需重新设置。没有增加供应商切换参数；第二种不同回复格式只在离线测试中模拟，用于检查核心循环、权限、恢复、摘要与预算是否通过统一接口工作，不代表已接入或验证第二家真实服务。
+
+可以在独立临时目录准备一个正确的求和项目验证适配后的行为，不继承旧会话历史：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$providerProject = Join-Path $env:TEMP ('learn-agent-provider-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $providerProject | Out-Null
+$providerMain = @'
+def sum_to(n):
+    return sum(range(1, n + 1))
+
+if __name__ == "__main__":
+    print(sum_to(100))
+'@
+$providerTests = @'
+import unittest
+from main import sum_to
+
+class SumTests(unittest.TestCase):
+    def test_zero(self): self.assertEqual(sum_to(0), 0)
+    def test_one(self): self.assertEqual(sum_to(1), 1)
+    def test_ten(self): self.assertEqual(sum_to(10), 55)
+    def test_hundred(self): self.assertEqual(sum_to(100), 5050)
+
+if __name__ == "__main__": unittest.main()
+'@
+Set-Content -LiteralPath (Join-Path $providerProject 'main.py') -Value $providerMain -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $providerProject 'test_main.py') -Value $providerTests -Encoding UTF8
+$providerTask = @'
+本次只验证现有项目，不创建或修改文件，不读取其他资料。
+先用 update_plan 建立读取 main.py 与 test_main.py、运行验收、运行入口三项计划。
+读取两份源码，然后分别调用 run_command 运行 python -m unittest -v test_main.py，以及 run_python 运行 main.py。
+evidence 原样复制本次工具结果正文中的 evidence_id。根据真实成功结果将计划全部标为 completed，最后用中文简要报告测试和入口结果。
+'@
+python -B -X utf8 tool_call.py --workspace $providerProject --plan --auto-read --stream --deny-tool edit_file --deny-tool write_file --max-model-calls 12 --preview $providerTask
+python -B -X utf8 tool_call.py --workspace $providerProject --plan --auto-read --stream --deny-tool edit_file --deny-tool write_file --max-model-calls 12 $providerTask
+```
+
+两次运行分别输入 y；预期四项测试通过、入口 stdout 为 5050、计划全部 completed，最终 completed / stop。模型可以安排不同请求轮次。检查日志中的适配器、工具结果、计划和结束状态：
+
+```powershell
+$providerLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$providerEvents = @(Get-Content -LiteralPath $providerLog -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+$providerEvents[0] | Select-Object provider, workspace
+$providerEvents | Where-Object { $_.event -eq 'tool_result' -and $_.tool -in @('run_command', 'run_python') } |
+    ForEach-Object { $_.result } | Format-List tool, ok, exit_code, stdout, stderr
+($providerEvents | Where-Object { $_.event -eq 'plan_updated' } | Select-Object -Last 1).steps |
+    Select-Object step, status, @{Name='evidence'; Expression={ $_.evidence -join ', ' }} |
+    Format-Table -Wrap -AutoSize
+python -B -X utf8 tool_call.py --status $providerLog
+```
 
 ## 项目指令与任务计划
 
@@ -1101,9 +1166,11 @@ python -m unittest discover -s tests -v
 
 第 35 课新增 `tests/test_permissions.py` 的 15 项测试，累计 311 项通过。覆盖七种内置工具的默认确认、只读自动允许、明确拒绝优先且不进入准备、策略拒绝与人工拒绝的状态和 SQLite 来源区分、资料及模型的授权声明无效、同批剩余工具停止、已完成结果保留、恢复时 NotExecuted 与重新授权、本次策略不从历史继承、非法权限参数与越界拦截、预览和错误工具名的离线行为。README 三组命令已在本机 Windows PowerShell 5.1 的临时项目中按顺序验证：读取自动允许，编辑和运行分别确认后实际输出 5051；执行与读取明确拒绝均为 cancelled / policy_denied 且没有 tool_started 或 tool_result。模型及流式回调使用模拟数据，文件读写、Python 与 SQLite 实际执行，未调用付费 API。使用者随后完成真实模型验收：编辑与运行仍分别确认，输出 5051，最终 completed / stop；两类禁用都直接拒绝、没有工具执行结果，最终 cancelled / policy_denied。
 
-第 36 课新增 `tests/test_instructions_and_plan.py` 的 22 项测试，累计 333 项通过。覆盖显式加载与关闭时兼容、UTF-8 BOM 与来源摘要值、非法路径和超限/无效文本在联网前停止、项目资料不能授权、续聊使用本次规则、计划工具按运行启用且不污染注册表、内部自动允许与明确拒绝、真实失败测试后更新计划并编辑重验、虚构/失败/自引用/重复编号证据拒绝、源码修改或同一运行后来失败时旧成功失效、不同运行目标证据共存、未建立或未完成计划暂停及显式恢复、整批参数检查、token 暂停和上下文中的当前快照。README 两段命令已在 Windows PowerShell 5.1 的独立临时副本顺序验证，真实读取/编辑、四项 unittest 和入口执行、SQLite 保存；模型网络使用模拟 JSON/SSE，经过真实流式读取代码，不调用付费 API。失败后进入修复和验证、最终计划全部完成、入口 5050、4 次人工确认、验收脚本内容未变，最终 completed / stop；真实模型运行待使用者验证。
+第 36 课新增 `tests/test_instructions_and_plan.py` 的 22 项测试，累计 333 项通过。覆盖显式加载与关闭时兼容、UTF-8 BOM 与来源摘要值、非法路径和超限/无效文本在联网前停止、项目资料不能授权、续聊使用本次规则、计划工具按运行启用且不污染注册表、内部自动允许与明确拒绝、真实失败测试后更新计划并编辑重验、虚构/失败/自引用/重复编号证据拒绝、源码修改或同一运行后来失败时旧成功失效、不同运行目标证据共存、未建立或未完成计划暂停及显式恢复、整批参数检查、token 暂停和上下文中的当前快照。README 两段命令已在 Windows PowerShell 5.1 的独立临时副本顺序验证，真实读取/编辑、四项 unittest 和入口执行、SQLite 保存；模型网络使用模拟 JSON/SSE，经过真实流式读取代码，不调用付费 API。失败后进入修复和验证、最终计划全部完成、入口 5050、4 次人工确认、验收脚本内容未变，最终 completed / stop；使用者随后已真实完成修复与计划复验。
 
-第 36 课计划反馈修复新增 6 项回归测试，累计 339 项通过。先复现旧实现缺少 evidence_id、错误反馈无可用清单，以及无法完成预期失败诊断，再修正。新增用例从返回正文动态发现编号，不预先替模型写好证据；覆盖错误引用后按清单修正、真实失败验收—历史诊断完成—局部修复—通过验收的完整流程、失败诊断在修复后保留，以及无执行/超时/截断/清理失败/错误结果不能冒充预期失败。原有默认成功与过时证据拦截继续通过。上述恢复命令也已在 Windows PowerShell 5.1 验证：复制使用者的暂停日志与正确项目，在副本重新读取、两次确认执行、4 项测试通过、入口 5050、计划全部完成、最终 completed / stop；使用模拟模型网络和真实 SSE 读取、SQLite 保存，原文件与日志未改动，不调用付费 API。用户已真实完成源码修复与验收，但计划闭环仍待修复后复验；不把该轮 paused / plan_incomplete 记作整课验收成功。
+第 36 课计划反馈修复新增 6 项回归测试，累计 339 项通过。先复现旧实现缺少 evidence_id、错误反馈无可用清单，以及无法完成预期失败诊断，再修正。新增用例从返回正文动态发现编号，不预先替模型写好证据；覆盖错误引用后按清单修正、真实失败验收—历史诊断完成—局部修复—通过验收的完整流程、失败诊断在修复后保留，以及无执行/超时/截断/清理失败/错误结果不能冒充预期失败。原有默认成功与过时证据拦截继续通过。上述恢复命令也已在 Windows PowerShell 5.1 验证：复制使用者的暂停日志与正确项目，在副本重新读取、两次确认执行、4 项测试通过、入口 5050、计划全部完成、最终 completed / stop；使用模拟模型网络和真实 SSE 读取、SQLite 保存，原文件与日志未改动，不调用付费 API。使用者随后已真实复验：8 次模型请求、4 次计划更新、3 项步骤全部 completed，证据编号与工具结果逐一对应，2 次执行由 user 确认，无 PlanError，最终 completed / stop；验收文件与首轮读取内容一致。
+
+第 37 课新增 `tests/test_providers.py` 的 12 项测试，累计 351 项通过。重构前 339 项基线通过；重构后覆盖 DeepSeek 请求配置、JSON/SSE 统一回复、完整工具参数、结束原因、缺失用量仍未知、无效回复与 HTTP 错误，以及另一种回复格式经模拟适配器完成真实文件读取、人工授权运行、流式事件、预算暂停、SQLite/JSONL 恢复和语义摘要共用预算。既有测试只调整模型模拟入口及摘要输入类型，原有行为断言继续执行。上述 PowerShell 命令已在 Windows PowerShell 5.1 的独立副本验证：真实读取与执行、四项测试通过、入口 5050、两次人工确认、计划全部完成、provider=deepseek、SQLite 保存和 completed / stop；网络使用模拟 HTTP/SSE，没有调用付费 API。真实 DeepSeek 接入此前已使用，本次适配后的真实模型复验待反馈；第二家服务仅接口模拟。
 
 ## 许可证
 

@@ -38,7 +38,7 @@ class ProjectDirectoryTests(unittest.TestCase):
     def run_cli(self, arguments, replies=()):
         with patch.object(sys, "argv", ["tool_call.py", *arguments]):
             with patch("tool_call.get_api_key", return_value="offline-placeholder") as key:
-                with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+                with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                     with patch("builtins.input", return_value="y") as approval:
                         with contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
@@ -124,7 +124,7 @@ class ProjectDirectoryTests(unittest.TestCase):
     def test_invalid_root_stops_before_credentials_network_or_log_creation(self):
         for selected in ("", str(self.root / "missing"), str(self.project / "main.py")):
             with self.subTest(selected=selected), patch.object(sys, "argv", ["tool_call.py", "--workspace", selected]):
-                with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                     with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                         tool_call.main()
                 key.assert_not_called()
@@ -193,7 +193,7 @@ class ProjectDirectoryTests(unittest.TestCase):
     def test_workspace_is_restored_after_request_failure(self):
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), "测试失败"]):
             with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                with patch("learn_agent.loop.call_model", side_effect=OSError("offline")):
+                with patch("learn_agent.providers.call_model", side_effect=OSError("offline")):
                     with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
                         tool_call.main()
         self.assertEqual(permissions.WORKSPACE, self.default)
@@ -215,7 +215,7 @@ class ProjectDirectoryTests(unittest.TestCase):
     def test_resume_other_project_is_rejected_before_credentials_or_network(self):
         source = self.saved_history(self.project)
         with patch.object(sys, "argv", ["tool_call.py", "--resume", str(source), "继续"]):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                 with self.assertRaises(SystemExit):
                     tool_call.main()
         key.assert_not_called()

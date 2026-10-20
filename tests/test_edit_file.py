@@ -64,7 +64,7 @@ class EditFileTests(unittest.TestCase):
         log_dir = self.root / "logs"
         helper_before = self.helper.read_bytes()
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "局部修改"]):
-            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.loop.call_model", side_effect=replies):
+            with patch("tool_call.get_api_key", return_value="offline-placeholder"), patch("learn_agent.providers.call_model", side_effect=replies):
                 with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                     tool_call.main()
         self.assertEqual(approval.call_count, 2)
@@ -91,7 +91,7 @@ class EditFileTests(unittest.TestCase):
                 original = source.encode("utf-8")
                 self.target.write_bytes(original)
                 reply = self.response([("edit", "edit_file", {"path": self.path, "old_text": old, "new_text": new})])
-                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 self.assertEqual(reason, "stop")
@@ -105,7 +105,7 @@ class EditFileTests(unittest.TestCase):
         wrong = {**self.arguments, "old_text": "old code that is not present"}
         replies = [self.response([("wrong", "edit_file", wrong)]),
                    self.response([("correct", "edit_file", self.arguments)]), self.final]
-        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+        with patch("learn_agent.providers.call_model", side_effect=replies) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
@@ -126,7 +126,7 @@ class EditFileTests(unittest.TestCase):
             self.assertIn("按差异编辑 demo/main.py", prompt)
             return "n"
 
-        with patch("learn_agent.loop.call_model", return_value=reply) as model, patch("learn_agent.tools.run_python") as runner:
+        with patch("learn_agent.providers.call_model", return_value=reply) as model, patch("learn_agent.tools.run_python") as runner:
             with patch("builtins.input", side_effect=reject), contextlib.redirect_stdout(output):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "user_denied")
@@ -144,7 +144,7 @@ class EditFileTests(unittest.TestCase):
             self.target.write_bytes(external)
             return "y"
 
-        with patch("learn_agent.loop.call_model", side_effect=[self.response([("edit", "edit_file", self.arguments)]), self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response([("edit", "edit_file", self.arguments)]), self.final]) as model:
             with patch("builtins.input", side_effect=approve_after_external_change), contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
@@ -196,7 +196,7 @@ class EditFileTests(unittest.TestCase):
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments):
-                with patch("learn_agent.loop.call_model", return_value=self.response([("bad", "edit_file", arguments)])):
+                with patch("learn_agent.providers.call_model", return_value=self.response([("bad", "edit_file", arguments)])):
                     with patch("learn_agent.tools.prepare_edit") as prepare, patch("builtins.input") as approval:
                         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                             loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -208,7 +208,7 @@ class EditFileTests(unittest.TestCase):
         for path, error_type in [("demo/missing.py", "FileNotFoundError"), ("demo/binary.txt", "UnicodeDecodeError")]:
             with self.subTest(path=path):
                 reply = self.response([("error", "edit_file", {**self.arguments, "path": path})])
-                with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
@@ -219,7 +219,7 @@ class EditFileTests(unittest.TestCase):
     def test_same_batch_prepares_each_edit_after_the_previous_write(self):
         second = {"path": self.path, "old_text": "print(total(values))", "new_text": "print('total:', total(values))"}
         reply = self.response([("first", "edit_file", self.arguments), ("second", "edit_file", second)])
-        with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
@@ -231,7 +231,7 @@ class EditFileTests(unittest.TestCase):
 
     def test_preview_advertises_edit_without_reading_writing_or_network(self):
         with patch.object(sys, "argv", ["tool_call.py", "--preview"]), patch("tool_call.get_api_key") as key:
-            with patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.prepare_edit") as prepare, patch("learn_agent.tools.apply_edit") as apply:
+            with patch("learn_agent.providers.call_model") as model, patch("learn_agent.tools.prepare_edit") as prepare, patch("learn_agent.tools.apply_edit") as apply:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

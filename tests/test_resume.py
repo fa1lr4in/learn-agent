@@ -52,7 +52,7 @@ class ResumeTests(unittest.TestCase):
         with patch.object(sys, "argv", ["tool_call.py", *arguments]):
             with patch.dict(os.environ, {"DEEPSEEK_MODEL": "current-model"}):
                 with patch("tool_call.get_api_key", return_value="current-offline-key") as key:
-                    with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+                    with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                         with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
         return model, key, approval, output.getvalue()
@@ -184,7 +184,7 @@ class ResumeTests(unittest.TestCase):
             with self.subTest(case=index):
                 self.save_entries(entries)
                 with patch.object(sys, "argv", ["tool_call.py", "--resume", str(self.source), "继续"]):
-                    with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, self.assertRaises(SystemExit):
+                    with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model, self.assertRaises(SystemExit):
                         tool_call.main()
                 key.assert_not_called()
                 model.assert_not_called()
@@ -195,7 +195,7 @@ class ResumeTests(unittest.TestCase):
 
     def test_resume_requires_an_explicit_new_task(self):
         with patch.object(sys, "argv", ["tool_call.py", "--resume", str(self.source)]):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stopped:
                     tool_call.main()
         self.assertEqual(stopped.exception.code, 2)

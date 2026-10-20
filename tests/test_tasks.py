@@ -45,7 +45,7 @@ class TaskTests(unittest.TestCase):
         output = io.StringIO()
         args = ["tool_call.py", "--workspace", str(self.project), *extra, "验证任务状态"]
         with patch.object(sys, "argv", args), patch("tool_call.get_api_key", return_value="offline-key"):
-            with patch("learn_agent.loop.call_model", side_effect=responses) as model:
+            with patch("learn_agent.providers.call_model", side_effect=responses) as model:
                 with patch("builtins.input", side_effect=answers if callable(answers) else None,
                            return_value=answers if not callable(answers) else None) as approval:
                     with contextlib.redirect_stdout(output):
@@ -164,7 +164,7 @@ class TaskTests(unittest.TestCase):
                 else:
                     record_event(events, "run_end", reason=end)
                 before = text.getvalue()
-                with patch("learn_agent.loop.call_model") as model:
+                with patch("learn_agent.providers.call_model") as model:
                     with self.assertRaises(ValueError):
                         loop.run_agent({"messages": []}, "offline-key", events)
                 model.assert_not_called()
@@ -175,7 +175,7 @@ class TaskTests(unittest.TestCase):
         before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         output = io.StringIO()
         with patch.object(sys, "argv", ["tool_call.py", "--status", str(log_path)]):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                 with patch("builtins.input") as approval, contextlib.redirect_stdout(output):
                     tool_call.main()
         key.assert_not_called()
@@ -226,7 +226,7 @@ class TaskTests(unittest.TestCase):
         for args in (["--status", str(bad)], ["--status", str(bad), "extra prompt"],
                      ["--status", str(bad), "--session", "some-id"], ["--status", str(bad), "--preview"]):
             with self.subTest(args=args), patch.object(sys, "argv", ["tool_call.py", *args]):
-                with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+                with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                         with self.assertRaises(SystemExit):
                             tool_call.main()

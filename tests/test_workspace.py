@@ -94,7 +94,7 @@ class WorkspaceTests(unittest.TestCase):
             self.response([("call_stats", "read_file", {"path": "demo/src/stats.py"})]),
             self.final,
         ]
-        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+        with patch("learn_agent.providers.call_model", side_effect=replies) as model:
             with patch("learn_agent.tools.write_file") as writer, patch("learn_agent.tools.run_python") as runner:
                 with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                     reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -121,7 +121,7 @@ class WorkspaceTests(unittest.TestCase):
             ("list_files", {"path": "demo", "recursive": True}),
         ]:
             with self.subTest(tool=name, arguments=arguments):
-                with patch("learn_agent.loop.call_model", return_value=self.response([("call_invalid", name, arguments)])):
+                with patch("learn_agent.providers.call_model", return_value=self.response([("call_invalid", name, arguments)])):
                     with patch("learn_agent.tools.read_file") as reader, patch("learn_agent.tools.list_files") as lister:
                         with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                             loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
@@ -136,7 +136,7 @@ class WorkspaceTests(unittest.TestCase):
         ]:
             with self.subTest(tool=name, path=path):
                 replies = [self.response([("call_error", name, {"path": path})]), self.final]
-                with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+                with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(copy.deepcopy(self.payload), "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
@@ -177,7 +177,7 @@ class WorkspaceTests(unittest.TestCase):
             self.final,
         ]
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+        with patch("learn_agent.providers.call_model", side_effect=replies) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
@@ -217,7 +217,7 @@ class WorkspaceTests(unittest.TestCase):
         for path in (*permissions.READ_ONLY_FILES, "demo_project/./test_stats.py"):
             with self.subTest(path=path):
                 reply = self.response([("call_write", "write_file", {"path": path, "content": "skip tests"})])
-                with patch("learn_agent.loop.call_model", return_value=reply), patch("learn_agent.tools.write_file") as writer:
+                with patch("learn_agent.providers.call_model", return_value=reply), patch("learn_agent.tools.write_file") as writer:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 writer.assert_not_called()
@@ -232,7 +232,7 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(tool=name):
                 log_file = io.StringIO()
                 reply = self.response([("call_denied", name, arguments)])
-                with patch("learn_agent.loop.call_model", return_value=reply) as model, patch("learn_agent.tools.subprocess.run") as process:
+                with patch("learn_agent.providers.call_model", return_value=reply) as model, patch("learn_agent.tools.subprocess.run") as process:
                     with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
                 self.assertEqual(reason, "user_denied")
@@ -246,7 +246,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_missing_parent_is_reported_without_creating_directories(self):
         reply = self.response([("call_missing", "write_file", {"path": "missing/main.py", "content": "print(1)\n"})])
-        with patch("learn_agent.loop.call_model", side_effect=[reply, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[reply, self.final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")

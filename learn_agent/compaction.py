@@ -4,7 +4,7 @@ import json
 
 from .events import record_event
 from .context import context_size
-from .model import call_model
+from .providers import ModelProvider, ModelResponse
 
 
 SUMMARY_INSTRUCTION = (
@@ -17,7 +17,7 @@ SUMMARY_INSTRUCTION = (
 )
 
 
-def generate_summary(payload, report, previous, api_key, budget, events, step):
+def generate_summary(payload, report, previous, api_key, budget, events, step, provider: ModelProvider):
     indices = report["omitted_indices"]
     old_indices = set(previous["source_indices"]) if previous else set()
     new_indices = [index for index in indices if index not in old_indices]
@@ -26,21 +26,20 @@ def generate_summary(payload, report, previous, api_key, budget, events, step):
         "previous_summary": previous["data"] if previous else None,
         "history": [{"index": i, "message": payload["messages"][i]} for i in new_indices],
     }
-    request = {
-        "model": payload["model"], "stream": False, "thinking": {"type": "disabled"},
-        "max_tokens": 1024, "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": SUMMARY_INSTRUCTION + f"尽量将 JSON 控制在 {min(1200, report['max_chars'] // 10)} 字符内。"},
-                     {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
-    }
+    request = provider.build_request(
+        [{"role": "system", "content": SUMMARY_INSTRUCTION + f"尽量将 JSON 控制在 {min(1200, report['max_chars'] // 10)} 字符内。"},
+         {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
+        model=payload["model"], max_tokens=1024, json_mode=True,
+    )
     record_event(events, "compaction_start", step=step, source_indices=indices, new_source_indices=new_indices)
     try:
         budget.start_call("summary")
         record_event(events, "compaction_request", step=step, call_index=budget.model_calls,
                      payload=request, input_chars=context_size(request), source_indices=indices, full_messages=payload["messages"])
         print(f"\n[语义摘要] 第 {budget.model_calls} 次模型请求，整理 {len(indices)} 条旧消息。")
-        response = call_model(request, api_key)
-        record_event(events, "compaction_response", step=step, call_index=budget.model_calls, response=response)
-        budget.observe(response, "summary")
+        response = provider.complete(request, api_key)
+        record_event(events, "compaction_response", step=step, call_index=budget.model_calls, response=response.as_dict())
+        budget.observe(response.as_dict(), "summary")
         result = parse_summary(response)
     except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
         record_event(events, "compaction_end", step=step, validated=False, error_type=type(error).__name__)
@@ -54,11 +53,10 @@ def generate_summary(payload, report, previous, api_key, budget, events, step):
     return summary
 
 
-def parse_summary(response: dict) -> dict:
+def parse_summary(response: ModelResponse) -> dict:
     try:
-        choice = response["choices"][0]
-        message = choice["message"]
-        if choice["finish_reason"] != "stop" or message.get("tool_calls"):
+        message = response.message
+        if response.finish_reason != "stop" or message.get("tool_calls"):
             raise ValueError("摘要必须完整 stop 结束且不能包含工具调用，未采用摘要。")
         result = json.loads(message["content"])
         if not isinstance(result, dict) or set(result) != {"goal", "constraints", "completed", "pending", "evidence", "next_step"}:

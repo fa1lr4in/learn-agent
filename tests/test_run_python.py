@@ -44,7 +44,7 @@ class RunPythonTests(unittest.TestCase):
             },
         }
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[writing, self.response, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[writing, self.response, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
@@ -83,7 +83,7 @@ class RunPythonTests(unittest.TestCase):
             }
             responses.append(response)
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
@@ -141,7 +141,7 @@ class RunPythonTests(unittest.TestCase):
             }
             responses.append(response)
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
@@ -192,7 +192,7 @@ class RunPythonTests(unittest.TestCase):
             ]
             responses.append(response)
         log_file = io.StringIO()
-        with patch("learn_agent.loop.call_model", side_effect=[*responses, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[*responses, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
         self.assertEqual(reason, "stop")
@@ -239,7 +239,7 @@ class RunPythonTests(unittest.TestCase):
         log_dir = self.workspace / "logs"
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--auto-read", "验证现有脚本"]):
             with patch("tool_call.get_api_key", return_value="offline-placeholder"):
-                with patch("learn_agent.loop.call_model", side_effect=[running, truncated]) as model, patch("learn_agent.tools.write_file") as writer:
+                with patch("learn_agent.providers.call_model", side_effect=[running, truncated]) as model, patch("learn_agent.tools.write_file") as writer:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()) as output:
                         tool_call.main()
         self.assertEqual(model.call_count, 2)
@@ -276,7 +276,7 @@ class RunPythonTests(unittest.TestCase):
                 "name": "write_file", "arguments": json.dumps({"path": "main.py", "content": "print(sum(range(1, 101)))\n"}),
             },
         })
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
             with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
         self.assertEqual(reason, "stop")
@@ -291,7 +291,7 @@ class RunPythonTests(unittest.TestCase):
         for code, error_type in [('print("开始")\nprint(1 / 0)\n', "ZeroDivisionError"), ("def broken(:\n    pass\n", "SyntaxError")]:
             with self.subTest(error_type=error_type):
                 tools.write_file("main.py", code)
-                with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
+                with patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
                     with patch("builtins.input", return_value="y") as approval, contextlib.redirect_stdout(io.StringIO()):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_called_once()
@@ -304,7 +304,7 @@ class RunPythonTests(unittest.TestCase):
 
     def test_timeout_terminates_child_and_returns_tool_error(self):
         tools.write_file("main.py", "import time\ntime.sleep(30)\n")
-        with patch.object(tools, "RUN_TIMEOUT", 0.3), patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
+        with patch.object(tools, "RUN_TIMEOUT", 0.3), patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder")
         self.assertEqual(reason, "stop")
@@ -315,7 +315,7 @@ class RunPythonTests(unittest.TestCase):
         self.assertNotIn("exit_code", result)
 
     def test_missing_script_does_not_start_process(self):
-        with patch("learn_agent.loop.call_model", side_effect=[self.response, self.final]) as model:
+        with patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
             with patch("learn_agent.tools.subprocess.run") as process, patch("builtins.input", return_value="y"):
                 with contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
@@ -329,7 +329,7 @@ class RunPythonTests(unittest.TestCase):
         for arguments in [{}, {"path": "../chat.py"}, {"path": "report.md"}, {"path": "main.py", "args": ["-c", "print(1)"]}]:
             with self.subTest(arguments=arguments):
                 self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(arguments)
-                with patch("learn_agent.loop.call_model", return_value=self.response), patch("learn_agent.tools.subprocess.run") as process:
+                with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.tools.subprocess.run") as process:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
@@ -349,7 +349,7 @@ class RunPythonTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps({"path": path})
                 log_file = io.StringIO()
-                with patch("learn_agent.loop.call_model", return_value=self.response) as model, patch("learn_agent.tools.run_python") as runner:
+                with patch("learn_agent.providers.call_model", return_value=self.response) as model, patch("learn_agent.tools.run_python") as runner:
                     with patch("builtins.input", return_value="n"), contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
                 self.assertEqual(reason, "user_denied")
@@ -362,7 +362,7 @@ class RunPythonTests(unittest.TestCase):
     def test_preview_shows_runner_without_executing_or_creating_logs(self):
         log_dir = self.workspace / "logs"
         with patch.object(tool_call, "LOG_DIR", log_dir), patch.object(sys, "argv", ["tool_call.py", "--preview"]):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model, patch("learn_agent.tools.run_python") as runner:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model, patch("learn_agent.tools.run_python") as runner:
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     tool_call.main()
         payload, _ = json.JSONDecoder().raw_decode(output.getvalue().split("\n", 1)[1])

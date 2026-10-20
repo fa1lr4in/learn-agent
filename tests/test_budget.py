@@ -43,7 +43,7 @@ class BudgetTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), *args, "验证预算"]):
             with patch("tool_call.get_api_key", return_value="offline-private-budget-key") as key:
-                with patch("learn_agent.loop.call_model", side_effect=replies) as model, patch("builtins.input", side_effect=answer if callable(answer) else None, return_value=answer) as approval:
+                with patch("learn_agent.providers.call_model", side_effect=replies) as model, patch("builtins.input", side_effect=answer if callable(answer) else None, return_value=answer) as approval:
                     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
                         if error:
                             with self.assertRaises(SystemExit):

@@ -8,7 +8,7 @@ from .budget import RunBudget
 from .compaction import generate_summary
 from .context import ContextLimitError, print_context, select_context
 from .events import EventRecorder, record_event
-from .model import call_model
+from .providers import DeepSeekProvider, ModelProvider
 from .permissions import PermissionPolicy, approve_tool
 from .planning import TaskPlan
 
@@ -18,10 +18,12 @@ MAX_MODEL_CALLS = 8
 
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
               budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False,
-              denied_tools: tuple[str, ...] = (), plan_enabled: bool = False) -> str:
+              denied_tools: tuple[str, ...] = (), plan_enabled: bool = False,
+              provider: ModelProvider | None = None) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
+    provider = provider if provider is not None else DeepSeekProvider()
     registry = dict(tools.TOOL_REGISTRY)
     plan = TaskPlan(log_file) if plan_enabled else None
     if plan is not None:
@@ -40,7 +42,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             try:
                 api_request, report = select_context(request, context_chars, summary_cache)
                 if semantic_compact and report["needs_summary"]:
-                    summary_cache = generate_summary(request, report, summary_cache, api_key, budget, log_file, step)
+                    summary_cache = generate_summary(request, report, summary_cache, api_key, budget, log_file, step, provider)
                     reason = budget.pause_reason() or ("max_model_calls" if budget.model_calls >= budget.max_model_calls else None)
                     if reason:
                         if reason == "max_model_calls":
@@ -83,22 +85,21 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                     tool_notice = True
 
             try:
-                response = call_model(api_request, api_key, on_delta=show_delta)
+                response = provider.complete(api_request, api_key, on_delta=show_delta)
             finally:
                 print(flush=True)
         else:
-            response = call_model(api_request, api_key)
-        record_event(log_file, "model_response", step=step, response=response)
-        budget.observe(response)
-        choice = response["choices"][0]
-        message = choice["message"]
+            response = provider.complete(api_request, api_key)
+        record_event(log_file, "model_response", step=step, response=response.as_dict())
+        budget.observe(response.as_dict())
+        message = response.message
         if not request.get("stream"):
             print(f"\n[{reply_label}]")
             print(json.dumps(message, ensure_ascii=False, indent=2))
         elif message.get("tool_calls"):
             print("[完整工具请求]")
             print(json.dumps(message["tool_calls"], ensure_ascii=False, indent=2))
-        finish_reason = choice["finish_reason"]
+        finish_reason = response.finish_reason
         print(f"停止原因：{finish_reason}")
         if finish_reason == "stop":
             if request.get("stream"):

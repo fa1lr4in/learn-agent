@@ -48,7 +48,7 @@ class CheckpointTests(unittest.TestCase):
     def run_cli(self, arguments, replies=(), answers=()):
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), *arguments]):
             with patch.object(tool_call, "LOG_DIR", self.logs), patch("tool_call.get_api_key", return_value="offline-private-key") as key:
-                with patch("learn_agent.loop.call_model", side_effect=replies) as model:
+                with patch("learn_agent.providers.call_model", side_effect=replies) as model:
                     with patch("builtins.input", side_effect=answers) as approval:
                         with contextlib.redirect_stdout(io.StringIO()) as output:
                             tool_call.main()
@@ -384,7 +384,7 @@ class CheckpointTests(unittest.TestCase):
             return "y"
 
         with patch.object(sys, "argv", ["tool_call.py", "--workspace", str(self.project), "--undo", str(self.log)]):
-            with patch("tool_call.get_api_key") as key, patch("learn_agent.loop.call_model") as model:
+            with patch("tool_call.get_api_key") as key, patch("learn_agent.providers.call_model") as model:
                 with patch("builtins.input", side_effect=approve), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
                     tool_call.main()
         key.assert_not_called()
