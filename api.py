@@ -43,7 +43,8 @@ def main() -> None:
         print(f"本地访问令牌保存在 {info_path}；仅供本机客户端使用，每次重启更换。", flush=True)
         print("终端保留运行，Ctrl+C 关闭；正在执行的操作会在返回后响应取消。", flush=True)
         try:
-            uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8000, access_log=False)).run(sockets=[listener])
+            uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8000, access_log=False,
+                                         timeout_graceful_shutdown=2)).run(sockets=[listener])
         except KeyboardInterrupt:
             print("\n本地后端已关闭。", flush=True)
         finally:

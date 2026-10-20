@@ -27,6 +27,7 @@ class ApiTask:
     session_id: str
     log_path: Path
     events: list[dict] = field(default_factory=list)
+    notifications: list[dict] = field(default_factory=list)
     pending_approval: dict | None = None
     approval_answer: bool | None = None
     cancel_requested: Event = field(default_factory=Event)
@@ -35,6 +36,9 @@ class ApiTask:
     error_type: str | None = None
     persistence_error: str | None = None
     thread: Thread | None = None
+
+    def event_id(self, sequence: int | None = None) -> str:
+        return f"{self.id}:{len(self.notifications) if sequence is None else sequence}"
 
     def snapshot(self) -> dict:
         last = self.events[-1] if self.events else {}
@@ -47,6 +51,7 @@ class ApiTask:
             "reason": last.get("reason") if ended else ("error" if self.error_type else None),
             "finished": self.finished, "cancel_requested": self.cancel_requested.is_set(),
             "pending_approval": self.pending_approval, "events": self.events,
+            "last_event_id": self.event_id(),
             "final_answer": final if ended and last["reason"] == "stop" else None,
             "summary": last.get("summary") if ended else None,
             "session_saved": self.session_saved, "error_type": self.error_type,
@@ -129,6 +134,35 @@ class TaskManager:
         with self.condition:
             return self._task(task_id).snapshot()
 
+    def open_events(self, task_id: str, cursor: str | None) -> tuple[str, int, dict | None]:
+        """Read a snapshot and its cursor under the same lock, before HTTP streaming starts."""
+        with self.condition:
+            task = self._task(task_id)
+            if cursor is None:
+                return task_id, len(task.notifications), task.snapshot()
+            owner, separator, number = cursor.partition(":")
+            if not separator or not number.isascii() or not number.isdigit() or len(number) > 12:
+                raise HTTPException(422, "事件游标格式必须是 task_id:序号。")
+            if owner != task_id:
+                raise HTTPException(409, "事件游标属于另一任务，不能混用。")
+            sequence = int(number)
+            if sequence > len(task.notifications):
+                raise HTTPException(409, "事件游标超过当前任务进度，请重新获取快照。")
+            return task_id, sequence, None
+
+    def wait_events(self, task_id: str, sequence: int, timeout: float = 10) -> tuple[list[dict], bool]:
+        """Wait without holding up the worker; a disconnected subscriber never cancels it."""
+        with self.condition:
+            task = self._task(task_id)
+            self.condition.wait_for(lambda: len(task.notifications) > sequence or task.finished or self.closed, timeout)
+            return deepcopy(task.notifications[sequence:]), task.finished or self.closed
+
+    def _publish(self, task: ApiTask, event: str, data: dict) -> None:
+        # All publishers hold self.condition. This journal is separate from the core JSONL log.
+        task.notifications.append({"id": task.event_id(len(task.notifications) + 1), "event": event,
+                                   "task_id": task.id, "session_id": task.session_id, "data": deepcopy(data)})
+        self.condition.notify_all()
+
     def approve(self, task_id: str, approval_id: str, approved: bool) -> dict:
         with self.condition:
             task = self._task(task_id)
@@ -137,8 +171,9 @@ class TaskManager:
                 raise HTTPException(409, "审批已失效、已处理或不属于此任务；请重新查询任务。")
             task.approval_answer = approved
             task.pending_approval = None
-            self.condition.notify_all()
-            return {"accepted": True, "task_id": task_id, "approval_id": approval_id, "approved": approved}
+            result = {"accepted": True, "task_id": task_id, "approval_id": approval_id, "approved": approved}
+            self._publish(task, "approval_submitted", result)
+            return result
 
     def cancel(self, task_id: str) -> dict:
         with self.condition:
@@ -147,7 +182,7 @@ class TaskManager:
                 raise HTTPException(409, "任务已经结束。")
             task.cancel_requested.set()
             task.pending_approval = None
-            self.condition.notify_all()
+            self._publish(task, "cancel_requested", {"cancel_requested": True})
             return {"accepted": True, "task_id": task_id, "cancel_requested": True}
 
     def _request_approval(self, task: ApiTask, call_id: str, name: str, arguments: dict, action: str) -> bool:
@@ -157,7 +192,7 @@ class TaskManager:
             task.approval_answer = None
             task.pending_approval = {"id": uuid4().hex, "tool_call_id": call_id,
                                      "tool": name, "arguments": deepcopy(arguments), "action": action}
-            self.condition.notify_all()
+            self._publish(task, "approval_required", task.pending_approval)
             self.condition.wait_for(lambda: task.approval_answer is not None or task.cancel_requested.is_set())
             task.pending_approval = None
             if task.cancel_requested.is_set():
@@ -170,16 +205,18 @@ class TaskManager:
         def observe(entry):
             with self.condition:
                 task.events.append(deepcopy(entry))
-                self.condition.notify_all()
+                self._publish(task, entry["event"], entry)
 
         try:
             with permissions.use_workspace(self.workspace):
                 with task.log_path.open("x", encoding="utf-8") as stream:
                     events = EventRecorder(stream, on_event=observe)
-                    payload = self.provider.build_request(task_messages(options["prompt"], self.workspace, history))
+                    payload = self.provider.build_request(task_messages(options["prompt"], self.workspace, history),
+                                                          stream=options["stream"])
                     record_event(events, "run_start", session_id=task.session_id, task_id=task.id, transport="http",
                                  provider=self.provider.name, workspace=str(self.workspace), recovery_version=1,
                                  auto_read=options["auto_read"], denied_tools=options["denied_tools"],
+                                 stream=options["stream"],
                                  max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens,
                                  checkpoint=str(task.log_path.with_suffix(".checkpoint.json")), initial_messages=payload["messages"])
                     reason = "error"
@@ -208,6 +245,10 @@ class TaskManager:
             with self.condition:
                 task.pending_approval = None
                 task.finished = True
+                completed = task.snapshot()
+                completed.pop("events")
+                completed.pop("last_event_id")
+                self._publish(task, "task_finished", completed)
                 CORE_LOCK.release()
                 self.condition.notify_all()
 
@@ -218,6 +259,7 @@ class TaskManager:
             for task in active:
                 task.cancel_requested.set()
                 task.pending_approval = None
+                self._publish(task, "cancel_requested", {"cancel_requested": True})
             self.condition.notify_all()
         for task in active:
             task.thread.join()

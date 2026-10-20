@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from secrets import compare_digest
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -20,6 +21,7 @@ class TaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
     prompt: str = Field(min_length=1, max_length=10000)
     auto_read: bool = False
+    stream: bool = False
     max_model_calls: int = Field(default=8, gt=0, le=32)
     max_total_tokens: int | None = Field(default=None, gt=0)
     denied_tools: list[str] = Field(default_factory=list)
@@ -98,6 +100,27 @@ def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
     @app.get("/tasks/{task_id}", dependencies=protected)
     def read_task(task_id: str):
         return manager.snapshot(task_id)
+
+    def event_subscription(task_id: str, after: str | None = None,
+                           last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):
+        if after is not None and last_event_id is not None and after != last_event_id:
+            raise HTTPException(422, "after 与 Last-Event-ID 不一致。")
+        return manager.open_events(task_id, last_event_id if last_event_id is not None else after)
+
+    @app.get("/tasks/{task_id}/events", dependencies=protected, response_class=EventSourceResponse)
+    async def task_events(subscription=Depends(event_subscription)):
+        task_id, sequence, snapshot = subscription
+        if snapshot is not None:
+            frame = {"id": snapshot["last_event_id"], "event": "snapshot", "task_id": task_id,
+                     "session_id": snapshot["session_id"], "data": snapshot}
+            yield ServerSentEvent(id=frame["id"], event=frame["event"], data=frame)
+        while True:
+            batch, done = await asyncio.to_thread(manager.wait_events, task_id, sequence)
+            for frame in batch:
+                yield ServerSentEvent(id=frame["id"], event=frame["event"], data=frame)
+                sequence += 1
+            if done:
+                return
 
     @app.post("/tasks/{task_id}/approvals", status_code=202, dependencies=protected)
     def approve_task(task_id: str, body: ApprovalRequest):
