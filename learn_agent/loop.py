@@ -1,6 +1,7 @@
 """Bounded model/tool loop, independent of individual tool names."""
 
 import json
+from collections.abc import Callable
 from typing import TextIO
 
 from . import tools
@@ -21,7 +22,9 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
               denied_tools: tuple[str, ...] = (), plan_enabled: bool = False,
               provider: ModelProvider | None = None, extra_tools: tuple[tools.Tool, ...] = (),
               tool_names: tuple[str, ...] | None = None, max_steps: int | None = None,
-              call_purpose: str = "task") -> str:
+              call_purpose: str = "task",
+              request_approval: Callable[[str, str, dict, str], bool] | None = None,
+              is_cancelled: Callable[[], bool] | None = None) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
@@ -41,6 +44,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
     policy = PermissionPolicy(auto_read, denied_tools)
     step_limit = max_steps if max_steps is not None else budget.max_model_calls
     for step in range(1, step_limit + 1):
+        if is_cancelled is not None and is_cancelled():
+            return "cancelled"
         reason = budget.pause_reason() or ("max_model_calls" if budget.model_calls >= budget.max_model_calls else None)
         if reason:
             record_event(log_file, "budget_paused", reason=reason, full_messages=request["messages"])
@@ -107,6 +112,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             response = provider.complete(api_request, api_key)
         record_event(log_file, "model_response", step=step, response=response.as_dict())
         budget.observe(response.as_dict(), call_purpose)
+        if is_cancelled is not None and is_cancelled():
+            return "cancelled"
         message = response.message
         if not request.get("stream"):
             print(f"\n[{reply_label}]")
@@ -166,17 +173,25 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             {"role": "assistant", "content": message.get("content"), "tool_calls": calls},
         ]
         for index, (tool_call, name, tool, arguments) in enumerate(prepared_calls):
+            if is_cancelled is not None and is_cancelled():
+                return "cancelled"
             try:
                 decision = policy.decide(name, tool.read_only, tool.internal)
                 prepared = None if decision == "deny" else tool.prepare(arguments)
                 if decision == "ask":
-                    record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"])
-                approved, source = approve_tool(prepared.action if prepared else name, decision, "internal" if tool.internal else "auto_read")
+                    record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"],
+                                 action=prepared.action, arguments=arguments)
+                if decision == "ask" and request_approval is not None:
+                    approved, source = request_approval(tool_call["id"], name, arguments, prepared.action), "user"
+                else:
+                    approved, source = approve_tool(prepared.action if prepared else name, decision, "internal" if tool.internal else "auto_read")
                 record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source, decision=decision)
                 if not approved:
                     print("已停止：未执行被拒绝的工具及本轮后续工具，也不会继续请求模型；此前已完成的操作保留。")
                     return "policy_denied" if decision == "deny" else "user_denied"
 
+                if is_cancelled is not None and is_cancelled():
+                    return "cancelled"
                 record_event(log_file, "tool_started", step=step, tool=name, tool_call_id=tool_call["id"])
                 result = {"ok": True, "tool": name, **prepared.execute()}
             except tools.TOOL_ERRORS as error:

@@ -49,6 +49,7 @@
 - 支持 `--subagent` 提供 `delegate_readonly`：确认后串行委派只读检查，子任务使用独立上下文和受限工具表，继承本次读取权限与禁用策略，与父任务共用模型次数和 token 预算；保存独立日志并返回报告、来源和用量。
 - 提供 `eval.py` 固定任务评测：逐题建立新项目，复用现有 CLI 和确认流程，按读取证据、修改范围与固定验收判定；保存包含失败的 JSON/Markdown 报告，支持重复运行和同题目版本的对照。
 - 提供 `web/` 前端交互示例：用原生 HTML、CSS、JavaScript 展示消息、工具卡片和两次独立审批，支持拒绝、停止与重置，以及跟随系统、浅色、深色主题；固定数据模拟，不调用模型或操作项目。
+- 提供 FastAPI 本地后端：创建和读取会话、提交任务、查询快照、逐项审批和申请取消，复用现有 Agent 循环、权限、检查点、预算、JSONL 与 SQLite。只监听本机，工作目录在启动时固定，一次运行一个任务；模型密钥只在后端读取。
 
 模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
 
@@ -60,7 +61,7 @@
 
 第七篇公众号正文与截图已由使用者处理完成：[从零开发 Agent（七）：接入扩展，用固定任务检验效果](<公众号文章/07-项目指令扩展与固定任务评测/从零开发 Agent（七）：接入扩展，用固定任务检验效果.md>)。已回到开发与教学，文章、图片和原始评测报告继续保留。
 
-第 42 课已实现前端交互示例。浏览器已检查两次确认后完成、拒绝不展示执行结果、读取中停止及取消后不继续、空输入、键盘发送和普通文本展示；JavaScript 语法检查通过。Python 内核保持原样，未调用真实模型。待使用者操作验证，并自行改动一个组件。
+第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已实现本地后端 API，新增 23 项离线测试，完整累计 450 项通过；已检查真实监听、健康检查、访问令牌、接口文档与正常关闭，尚未由使用者完成 DeepSeek 联合验收。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
 
 ## 前端交互示例
 
@@ -96,7 +97,127 @@ python -B -X utf8 -m http.server 5173 --bind 127.0.0.1 --directory web
 5. 在右上角切换浅色和深色，刷新后确认选择保留；选择跟随系统时，外观应跟随系统主题。切换主题不会重置正在进行的示例。
 6. 在 web/app.js 的 ToolCard() 中把「示例工具」改为「我的工具卡」。保存后用 Ctrl+F5 刷新并重新发送，观察工具卡文案变化，说明它怎样从组件函数出现在页面中。
 
-这只是前端交互验收。页面上允许、拒绝和停止只改变示例状态；真实请求、实际任务执行、权限与会话保存将在后续通过后端接入。浏览器人工验收通过并完成组件改动后，再标记本课完成。此次没有改 Python 逻辑，原有 427 项测试的通过记录保留；当前新增部分通过 JavaScript 语法检查和浏览器交互验证，不把它们计作新增 Python 单元测试。
+这只是前端交互验收。页面上允许、拒绝和停止只改变示例状态；真实请求、实际任务执行、权限与会话保存将在后续接入聊天界面。使用者已完成本课操作验证和组件文案修改，前端基础已验收。本课没有改 Python 逻辑，JavaScript 语法检查和浏览器交互验证不计作 Python 单元测试。
+
+## 本地后端 API
+
+第 43 课先建立真实 HTTP 接口，使用接口文档和终端验证；5173 端口的极简聊天页面仍使用示例数据。第 44 课处理持续事件通信，第 45 课再接入完整任务界面。
+
+会话是持续保存的聊天历史，任务是其中一次执行。创建会话返回 `id`，提交任务返回任务的 `id` 和 `session_id`。HTTP 202 只表示已接收；查询任务的 `finished` 为 true 后，再核对 `state`、`reason`、`session_saved` 和真实工具结果。
+
+| 接口 | 用途 |
+| --- | --- |
+| GET /health | 无需令牌的最小健康检查 |
+| POST /sessions；GET /sessions | 新建会话；列出当前项目的会话 |
+| GET /sessions/{session_id} | 读取已保存消息和工具记录 |
+| POST /sessions/{session_id}/tasks | 提交任务，立即返回任务 ID |
+| GET /tasks/{task_id} | 查询状态、待审批操作、事件快照、最终回答和累计用量 |
+| POST /tasks/{task_id}/approvals | 用 approval_id 和 approved 确认当前一项工具操作 |
+| POST /tasks/{task_id}/cancel | 申请取消，在安全检查点停止后续工作 |
+
+后端通过原有 `DeepSeekProvider` 和 `loop.run_agent()` 实际调用模型、执行工具；没有另写一套 Agent 循环。CLI 与 HTTP 共用 `prompts.task_messages()` 的任务指令。审批回调只处理权限策略判定为 ask 的操作，明确禁用仍优先。重复审批、错误审批 ID、把旧审批用于下一项工具，以及已有任务时再提交任务，均返回 409。
+
+现有工作目录和检查点选择是进程级状态，因此本课用一把执行锁串行运行任务；HTTP 查询和审批仍可继续访问。`--workspace` 在启动时固定，任务请求不能改它。模型密钥只读取后端的 `DEEPSEEK_API_KEY`，客户端使用每次启动生成的本地访问令牌。令牌保存在已被 Git 忽略的 `logs/.api-server.json`，正常关闭时删除；点号文件也不能被现有文件工具读取。接口检查 Host、Origin 和 Bearer 令牌，不开放跨站访问。此本地令牌用于控制当前后端，与 DeepSeek 模型密钥是两回事。
+
+任务请求目前接受 prompt、auto_read、max_model_calls、max_total_tokens、denied_tools；其他字段会拒绝。默认仍逐项确认，设置 auto_read=true 只自动允许读取类工具。API 暂不开放 MCP、插件、子任务和上下文压缩等 CLI 选项。
+
+终端一启动后端并保持运行。依赖已在本机安装；换环境时先安装 requirements.txt。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+.\.venv\Scripts\python.exe -B -X utf8 api.py --workspace .\workspace\demo_project
+```
+
+接口文档位于 http://127.0.0.1:8000/docs，健康检查位于 http://127.0.0.1:8000/health。文档的 Authorize 使用本次本地令牌；不要填写 DeepSeek API Key。下面的终端流程会自动读取本地令牌，省去手工复制。
+
+终端二执行以下命令，创建会话并提交只读验证任务。请求体显式使用 UTF-8，兼容中文提示词。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$apiInfo = Get-Content -LiteralPath .\logs\.api-server.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$apiUrl = $apiInfo.url
+$apiHeaders = @{ Authorization = "Bearer $($apiInfo.token)" }
+Invoke-RestMethod -Uri "$apiUrl/health"
+
+$apiSession = Invoke-RestMethod -Method Post -Uri "$apiUrl/sessions" -Headers $apiHeaders
+$apiBody = @{
+    prompt = '读取 main.py 和 src/stats.py，运行 python -m unittest -v test_stats.py，再运行 main.py。只核对现有代码，不创建或修改文件，最后简要报告真实结果。'
+    auto_read = $true
+    max_model_calls = 8
+} | ConvertTo-Json -Depth 5
+$apiTask = Invoke-RestMethod -Method Post -Uri "$apiUrl/sessions/$($apiSession.id)/tasks" `
+    -Headers $apiHeaders -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes($apiBody))
+$apiTask | Select-Object id, session_id, state, finished
+```
+
+继续在终端二执行下列查询循环。每遇到一项待审批操作，都会展示实际名称、参数和确认提示，输入 y 才允许；其他输入表示拒绝并停止任务。这里的 ID 都来自本次响应，不预先写死。查询失败时保留 `$apiTask.id`，先检查原任务，不要重复提交。
+
+```powershell
+$apiDeadline = (Get-Date).AddMinutes(10)
+$apiPreviousState = ''
+do {
+    $apiResult = Invoke-RestMethod -Uri "$apiUrl/tasks/$($apiTask.id)" -Headers $apiHeaders
+    if ($apiResult.state -ne $apiPreviousState) {
+        Write-Host "状态：$($apiResult.state)"
+        $apiPreviousState = $apiResult.state
+    }
+    if ($null -ne $apiResult.pending_approval) {
+        $apiPending = $apiResult.pending_approval
+        Write-Host "工具：$($apiPending.tool)"
+        Write-Host $apiPending.action
+        Write-Host ($apiPending.arguments | ConvertTo-Json -Depth 8)
+        $apiAnswer = Read-Host '输入 y 允许本次操作，其他输入拒绝'
+        $apiDecision = @{ approval_id = $apiPending.id; approved = ($apiAnswer -eq 'y') } | ConvertTo-Json
+        Invoke-RestMethod -Method Post -Uri "$apiUrl/tasks/$($apiTask.id)/approvals" `
+            -Headers $apiHeaders -ContentType 'application/json; charset=utf-8' `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($apiDecision)) | Out-Null
+    }
+    if (-not $apiResult.finished) { Start-Sleep -Milliseconds 300 }
+} until ($apiResult.finished -or (Get-Date) -ge $apiDeadline)
+if (-not $apiResult.finished) { throw "查询超时，先检查原任务 $($apiTask.id)，不要重复提交。" }
+
+$apiResult | Select-Object id, session_id, state, reason, finished, session_saved, persistence_error
+$apiResult.events | Where-Object { $_.event -eq 'tool_result' } |
+    ForEach-Object { $_.result } | Where-Object { $_.tool -in @('run_command', 'run_python') } |
+    Format-List tool, ok, exit_code, stdout, stderr
+$apiResult.final_answer
+$apiResult.summary | ConvertTo-Json -Depth 5
+.\.venv\Scripts\python.exe -B -X utf8 tool_call.py --status $apiResult.log_path
+```
+
+当前 demo_project 的验收目标是：执行分别确认，四项测试通过；入口输出 count=3、total=30、average=10.0、min=5、max=15；最终 completed / stop、finished=true、session_saved=true、persistence_error 为空。工具次数和模型请求次数以实际轨迹为准。继续用 GET /sessions/{id} 可以核对 SQLite 中保存的消息和工具记录。
+
+```powershell
+$apiSaved = Invoke-RestMethod -Uri "$apiUrl/sessions/$($apiSession.id)" -Headers $apiHeaders
+$apiSaved.messages | Select-Object -Last 1 | Format-List role, content
+$apiSaved.tool_runs | Select-Object name, approved, approval_source
+```
+
+拒绝验证：重新执行创建会话和提交任务的命令，再执行查询循环，在第一次运行确认处输入 n。应为 cancelled / user_denied，保留读取结果，不执行被拒绝的工具和后续工具。
+
+取消验证：重新创建会话并提交任务，先不运行交互式审批循环。在同一个终端执行下面的命令，等待审批出现后申请取消，并查询同一任务直到结束；应为 cancelled / cancelled，无被取消操作的 tool_started 或 tool_result。
+
+```powershell
+$apiDeadline = (Get-Date).AddMinutes(10)
+do {
+    $apiWaiting = Invoke-RestMethod -Uri "$apiUrl/tasks/$($apiTask.id)" -Headers $apiHeaders
+    if (-not $apiWaiting.finished -and $null -eq $apiWaiting.pending_approval) { Start-Sleep -Milliseconds 300 }
+} until ($apiWaiting.finished -or $null -ne $apiWaiting.pending_approval -or (Get-Date) -ge $apiDeadline)
+if ($apiWaiting.finished -or $null -eq $apiWaiting.pending_approval) { throw '本次没有等到待审批操作，请先检查原任务。' }
+Invoke-RestMethod -Method Post -Uri "$apiUrl/tasks/$($apiTask.id)/cancel" -Headers $apiHeaders
+do {
+    $apiCancelled = Invoke-RestMethod -Uri "$apiUrl/tasks/$($apiTask.id)" -Headers $apiHeaders
+    if (-not $apiCancelled.finished) { Start-Sleep -Milliseconds 300 }
+} until ($apiCancelled.finished -or (Get-Date) -ge $apiDeadline)
+$apiCancelled | Select-Object state, reason, finished, cancel_requested
+```
+
+取消是协作式的：等待审批会立即被唤醒；进行中的模型请求或工具调用先返回，随后检查取消并停止后续操作，不会把“已申请取消”冒充成“已停止”，也不会撤回已完成的修改。关闭后端会申请取消并等待正在执行的操作返回。
+
+已保存的会话可在重启后按 ID 查询，正常结束或达到模型请求次数上限的会话可继续 POST 新任务；旧工具不重放。取消、拒绝、失败和其他暂停原因目前沿用既有恢复边界，API 返回 409，需要时用 CLI 的 --recover 检查后恢复。运行中快照与未执行过任务的空会话只存在本次进程，重启后旧 task_id 返回 404；持续事件、刷新重连与完整网页恢复留待后续实现。session_saved=false 或 persistence_error 非空时，先核对 JSONL，不要直接重做有副作用的任务。
+
+新增 23 项测试使用临时目录与固定模型回复，覆盖真实读写、执行、权限、审批失效、取消、单任务边界、预算、日志/数据库一致性、会话续聊、密钥不回传与退出清理。完整 450 项测试通过；本机已验证实际服务启动与连接。以上离线检查不替代使用者的 DeepSeek 端到端验收。
 
 ## 代码结构与工具注册
 
@@ -104,6 +225,7 @@ python -B -X utf8 -m http.server 5173 --bind 127.0.0.1 --directory web
 chat.py                 基础聊天命令行入口
 tool_call.py            Agent 命令行入口：参数、请求配置、日志文件和结果展示
 eval.py                 固定任务评测入口
+api.py                  本地 HTTP 后端启动入口：固定工作目录与本地访问令牌
 web/                    前端交互示例（静态文件，固定数据）
   index.html            页面结构
   styles.css            布局与浅色/深色样式
@@ -114,6 +236,9 @@ learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
   providers.py          ModelProvider / DeepSeekProvider / ModelResponse：请求构造与回复适配
+  prompts.py            CLI 与 HTTP 共用的工作目录说明和任务指令
+  api.py                FastAPI 请求结构、访问检查与会话/任务/审批路由
+  api_runtime.py        后台任务、执行锁、审批等待、取消与已有内核的衔接
   mcp_client.py         连接本地 MCP 服务、发现工具并适配到本次工具表
   mcp_demo_server.py    独立的 MCP stdio 求和服务
   streaming.py          SSE 数据读取、文本与工具片段拼接、完整回复检查
@@ -140,7 +265,7 @@ extensions/python-check/ 一个 Skill 与单文件 Python 插件的可运行示�
 workspace/              Agent 可以操作的练习目录
 ```
 
-两个入口共用 `DeepSeekProvider.build_request()` 构造请求。`model.py` 保留现有 DeepSeek HTTP/SSE 传输与本地密钥读取；`chat.py` 继续展示原始回复 JSON，Agent 入口把适配器传入 `loop.run_agent()`，循环只读取统一回复的 message、finish_reason、usage。循环通过工具名称从 `TOOL_REGISTRY` 取出 `Tool`，先校验整批请求，再按统一策略判断权限；明确拒绝时不进入工具准备，其他操作依次准备、自动允许或人工确认、执行并记录结果，将结果放进下一轮消息。
+基础聊天、CLI Agent 与 HTTP 后端共用 `DeepSeekProvider.build_request()` 构造请求。`model.py` 保留现有 DeepSeek HTTP/SSE 传输与本地密钥读取；`chat.py` 继续展示原始回复 JSON，Agent 入口把适配器传入 `loop.run_agent()`，循环只读取统一回复的 message、finish_reason、usage。循环通过工具名称从 `TOOL_REGISTRY` 取出 `Tool`，先校验整批请求，再按统一策略判断权限；明确拒绝时不进入工具准备，其他操作依次准备、自动允许或人工确认、执行并记录结果，将结果放进下一轮消息。
 
 每个 `Tool` 一起登记五项信息：`schema` 是给模型看的名称、说明和参数；`validate` 检查参数值与路径；`prepare` 生成 `PreparedTool`，保存确认提示与待执行函数；`read_only` 决定能否被 `--auto-read` 自动允许；`internal` 表示仅更新程序内部状态、无需人工确认的工具。后两项默认均为 `False`，由本地开发者登记，明确禁用优先。准备编辑时只读取原文并展示差异，真正写入放在确认后的 `execute()` 中。
 

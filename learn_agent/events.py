@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
@@ -26,14 +27,18 @@ def record_event(log_file: TextIO | EventRecorder | None, event: str, **details)
 class EventRecorder:
     """Keep one run's live status consistent with its flushed event log."""
 
-    def __init__(self, log_file: TextIO | None):
+    def __init__(self, log_file: TextIO | None, on_event: Callable[[dict], None] | None = None):
         self.log_file = log_file
+        self.on_event = on_event
         self.status = TaskStatus()
 
     def record(self, event: str, **details) -> None:
         previous = self.status.state
         self.status.apply({"event": event, **details})
-        record_event(self.log_file, event, **details, task_state=self.status.state)
+        entry = {"time": datetime.now(timezone.utc).isoformat(), "event": event, **details, "task_state": self.status.state}
+        record_event(self.log_file, event, **{key: value for key, value in entry.items() if key != "event"})
+        if self.on_event is not None:
+            self.on_event(entry)
         if event == "run_start" or self.status.state != previous:
             print(f"\n[任务状态] {self.status.state}（{STATE_LABELS[self.status.state]}）")
 

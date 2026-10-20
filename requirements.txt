@@ -1,3 +1,6 @@
 mcp==2.3.0
 jsonschema==4.26.0
 PyYAML==6.0.3
+fastapi==0.152.0
+uvicorn==0.54.0
+httpx==0.28.1
