@@ -45,8 +45,11 @@
 - 支持 `--instructions FILE` 显式读取项目规则，记录路径、SHA-256 与原文快照；低于当前用户任务，不改变工具权限。支持 `--plan` 提供 `update_plan`，用本次工具结果更新步骤，未完成或证据过时则暂停。
 - 增加 `ModelProvider` / `DeepSeekProvider` 适配层，集中构造请求并将回复转为 `ModelResponse`；工具循环和语义摘要通过同一适配器调用模型，日志记录 provider，用量继续共用预算。
 - 支持 `--mcp-demo`：用官方 MCP Python SDK 经 stdio 连接独立的本地求和服务，发现工具并仅在本次运行中接入；外部工具逐次确认，支持明确禁用、参数检查、计划证据、日志和会话恢复。
+- 支持 `--skill DIR` 显式加载 `SKILL.md` 做事指南；`--plugin DIR` 加载带版本的本地 Python 工具插件。两者独立开关，不改核心循环；插件逐次确认，预览只读清单和源码，不执行插件代码。
 
 模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
+
+第 39 课已实现显式 Skill 与本地插件加载，新增 18 项测试，当前完整测试累计 388 项通过。独立临时项目的 PowerShell 命令已离线验证：真实 AST 解析、两次插件确认、真实四项验收与入口运行、来源快照、SQLite 保存，最终 completed / stop；模型回复模拟，没有调用付费 API。第 38 课按使用者要求暂缓，保留待验收状态；第 39 课真实 DeepSeek 复验待反馈。
 
 ## 代码结构与工具注册
 
@@ -64,6 +67,7 @@ learn_agent/
   context.py            上下文字符预算、长工具结果投影、成组历史选择与可追溯摘录
   compaction.py         模型语义摘要请求、结构校验、来源记录与同运行摘要合并
   instructions.py       显式项目规则读取、来源与版本标识、当前用户任务分隔
+  extensions.py         本次 Skill 加载、插件清单检查、确认后执行与来源快照
   planning.py           本次任务步骤、证据引用与有效性检查、内部计划工具
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
@@ -75,6 +79,7 @@ learn_agent/
   tasks.py              TaskStatus、事件推导状态与只读回放
   recovery.py           取消、异常与 token 预算暂停检查、已有结果保留和未执行状态补全
 tests/                  使用临时目录和模拟模型响应的自动化测试
+extensions/python-check/ 一个 Skill 与单文件 Python 插件的可运行示例
 workspace/              Agent 可以操作的练习目录
 ```
 
@@ -96,7 +101,7 @@ python tool_call.py --auto-read "请先在 demo_project/src 中搜索 summarize�
 
 ## 运行
 
-需要 Python 3.11 或更新版本。原有模型调用和内置工具使用标准库；可选的 MCP 示例需要安装 requirements.txt，下面的 MCP 小节给出独立 .venv 的安装命令。
+需要 Python 3.11 或更新版本。原有模型调用和内置工具使用标准库；可选的 MCP、Skill 和插件示例需要安装 requirements.txt，下面的小节给出独立 .venv 的安装命令。未启用这些功能时，不导入可选依赖。
 
 ```powershell
 # 预览请求
@@ -235,6 +240,81 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 预期同样直接拒绝、没有读取结果，最终 `cancelled / policy_denied`。若模型没有提出指定工具，不能把仅返回文字当作拦截验证成功，应以 `tool_approval.decision: deny` 为证据。
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
+
+## 加载 Skill 与本地插件
+
+第 39 课把做事指南与工具实现分开加载：
+
+| 扩展 | 给 Agent 增加什么 | 本次实现的入口 |
+| --- | --- | --- |
+| Skill | 告诉模型应该怎样组织工作；正文会占用输入上下文 | `--skill DIR` 读取目录中的 `SKILL.md` |
+| 本地插件 | 由 Python 代码实现一个可调用的新工具 | `--plugin DIR` 读取 `plugin.json` 与 `plugin.py` |
+
+示例 `extensions/python-check` 同时包含两者，但开关独立。只加载 Skill 不会安装插件；只加载插件会增加工具，不会附加 Skill 正文。Skill 使用 [Agent Skills 规范](https://agentskills.io/specification)中的 YAML 元信息与 Markdown 正文结构；本次只支持显式加载一个目录，未实现自动匹配、资源按需加载或脚本调度。`allowed-tools` 即使出现在元信息中也只是资料，不授予权限。Skill 低于当前用户要求，不能改变预算、系统规则与授权。
+
+本地插件格式由本项目定义，暂为单文件格式，不是通用插件标准。`plugin.json` 声明 `name`、`version` 和 `tools`；每个工具声明 `name`、`description`、`parameters`。参数使用 JSON Schema，根节点须为 `object`，包含 `properties` 且设置 `additionalProperties: false`；不允许远程引用。`plugin.py` 提供 `execute(tool_name, arguments, workspace)`，返回可序列化为 JSON 的值。模型看到的工具名为 `plugin_<插件名>_<工具名>`；示例是 `plugin_python_check_inspect_python`。
+
+启动时只读并检查清单和源码，不导入或执行插件。工具调用经整批参数检查、权限判断与人工确认后，才加载并执行对应源码；`--auto-read` 不会自动允许插件，`--deny-tool` 可以明确禁用本次加载的插件工具。确认后重新比较清单和源码快照，变化时返回失败，不执行旧代码。结果放在宿主结果的 `value` 中，最大 32 KiB，插件不能覆盖宿主的工具名与结果字段。示例用 AST 解析源码结构，返回函数/类的名称、类型与行号，不执行被检查的源码，也不证明测试已经通过。
+
+插件是受信任的 Python 代码，与 Agent 同进程执行，没有操作系统沙箱、独立超时或进程隔离。人工确认的是执行该插件代码；参数 Schema 与路径检查不是隔离机制。示例主动调用现有 workspace 路径检查；其他插件的代码是否遵守范围，需要核对其实现。
+
+以下命令在仓库根目录执行，创建独立临时项目，不改变原练习文件：
+
+```powershell
+if (-not (Test-Path -LiteralPath '.\.venv\Scripts\python.exe')) { python -m venv .venv }
+$agentPython = '.\.venv\Scripts\python.exe'
+& $agentPython -m pip install -r .\requirements.txt
+$extensionProject = Join-Path ([System.IO.Path]::GetTempPath()) ('learn-agent-extension-demo-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $extensionProject | Out-Null
+Copy-Item -LiteralPath .\extensions -Destination $extensionProject -Recurse
+@'
+def sum_to(n):
+    return sum(range(1, n + 1))
+
+if __name__ == '__main__':
+    print(sum_to(100))
+'@ | Set-Content -LiteralPath (Join-Path $extensionProject 'main.py') -Encoding UTF8
+@'
+import unittest
+from main import sum_to
+
+class SumTests(unittest.TestCase):
+    def test_zero(self): self.assertEqual(sum_to(0), 0)
+    def test_one(self): self.assertEqual(sum_to(1), 1)
+    def test_ten(self): self.assertEqual(sum_to(10), 55)
+    def test_hundred(self): self.assertEqual(sum_to(100), 5050)
+
+if __name__ == '__main__':
+    unittest.main()
+'@ | Set-Content -LiteralPath (Join-Path $extensionProject 'test_main.py') -Encoding UTF8
+$extensionTask = '按本次 Skill 核对 main.py 与 test_main.py。先分别使用 plugin_python_check_inspect_python 检查两份文件的结构，需要正文时读取源码；再用 run_command 执行 python -m unittest -v test_main.py，用 run_python 运行 main.py，最后按 Skill 格式简要报告。本次不创建或修改文件，静态检查不等于测试通过。'
+```
+
+先预览，再用相同参数运行：
+
+```powershell
+& $agentPython -B -X utf8 tool_call.py --workspace $extensionProject --skill extensions/python-check --plugin extensions/python-check --auto-read --preview $extensionTask
+& $agentPython -B -X utf8 tool_call.py --workspace $extensionProject --skill extensions/python-check --plugin extensions/python-check --auto-read --stream --max-model-calls 12 $extensionTask
+```
+
+预览中应有 `[本次 Skill 资料]`、路径/SHA256/元信息/正文，以及新插件工具说明；预览不联网、不创建日志或执行插件。实际运行时，两个插件调用和两次执行分别需要确认，按提示输入 `y`；必要的内置读取自动允许。插件结果 `value.definitions` 应包含 `sum_to` 和测试类，`source_executed: false` 表示静态解析。随后真实验收应为四项测试通过（报告在 stderr），入口 stdout 为 `5050`，最终 `completed / stop`。工具轮次由模型决定，不要求固定次数。最终报告按“源码结构”“验收结果”“未完成事项”组织。
+
+本次新建运行的日志中，`run_start.skill_source` 保存 Skill 元信息、路径、字节数与 SHA256，`plugin_source` 保存插件版本、清单与源码来源。模型消息保存 Skill 原文快照；插件结果与内置工具共用预算、日志和 SQLite。
+
+```powershell
+$extensionLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$extensionEvents = @(Get-Content -LiteralPath $extensionLog -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+$extensionEvents | Where-Object { $_.event -eq 'run_start' } | Select-Object skill_source, plugin_source | ConvertTo-Json -Depth 10
+$extensionEvents | Where-Object { $_.event -eq 'tool_result' -and $_.tool -like 'plugin_*' } | Select-Object tool, result | ConvertTo-Json -Depth 10
+python -B -X utf8 tool_call.py --status $extensionLog
+```
+
+恢复历史不会重放旧工具或重新加载扩展；需要继续使用时，应再次显式提供 `--skill` 与 `--plugin`。不提供时，旧 Skill 仅作为历史资料，新请求不发布旧插件工具。开关只作用于本次任务，扩展来源与用户确认不会从会话继承。
+
+第 39 课新增 `tests/test_extensions.py` 的 18 项测试，完整 388 项通过。覆盖默认不加载、缺依赖友好报错、Skill 原文与来源、UTF-8 BOM、元信息不授予权限、项目规则与当前任务分隔、无效清单和越界路径在 API 前拦截、预览不执行插件顶层代码、静态解析不运行目标源码、确认/拒绝/禁用、整批参数检查、确认期间源码变化、异常与非 JSON/超长结果、宿主字段保护、预算暂停、SQLite 恢复不自动加载。上述命令已在 Windows PowerShell 5.1 的独立临时项目验证：模拟模型回复，真实执行插件和验收/入口，共四次人工授权，四项测试通过、stdout 5050、最终 completed / stop，未触碰原练习项目和使用者日志。完整验证使用 `.\.venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests`。
+
+第 38 课 MCP 示例保留当前实现，按使用者要求暂缓进一步学习和真实模型复验，不标记已验收。
 
 ## 接入本地 MCP 工具
 

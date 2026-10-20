@@ -1,0 +1,16 @@
+{
+  "name": "python_check",
+  "version": "0.1.0",
+  "tools": [
+    {
+      "name": "inspect_python",
+      "description": "读取 workspace 内至多 128 KiB 的普通 UTF-8 Python 文件，用 AST 返回函数和类的名称、类型、行号。只做静态分析，不执行目标源码，不能作为测试通过的证据。",
+      "parameters": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "minLength": 1}},
+        "required": ["path"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
