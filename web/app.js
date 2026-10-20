@@ -3,7 +3,7 @@ import { DEMO } from "./demo-data.js";
 const ui = Object.fromEntries([
   "new-task", "reset-task", "task-status", "timeline", "welcome", "messages", "approval",
   "approval-tool", "approval-command", "allow", "deny", "notice", "composer",
-  "prompt", "stop", "send", "progress-read", "progress-tests", "progress-entry",
+  "prompt", "stop", "send",
 ].map(id => [id, document.getElementById(id)]));
 
 const PHASES = { idle: "就绪", running: "进行中", waiting_approval: "等待确认", completed: "已完成", cancelled: "已取消" };
@@ -22,11 +22,9 @@ function element(tag, className, text) {
 // 组件就是根据一份数据，创建一块界面的函数。
 function Message(item) {
   const row = element("article", `message ${item.role}`);
-  const avatar = element("span", "avatar", item.role === "user" ? "你" : "a");
-  avatar.setAttribute("aria-hidden", "true");
   const body = element("div", "message-body");
   body.append(element("p", "message-author", item.role === "user" ? "你" : "learn-agent"), element("p", "message-text", item.content));
-  row.append(avatar, body);
+  row.append(body);
   return row;
 }
 
@@ -89,13 +87,6 @@ function render() {
     cancelled: "本次示例已取消，已有结果保留。点击「新建示例」可以重试。",
   };
   ui.notice.textContent = notices[state.phase];
-  const reads = state.items.filter(item => item.name === "read_file");
-  const stages = {
-    read: reads.length ? (reads.every(item => item.status === "completed") ? "completed" : reads[0].status) : "pending",
-    tests: state.items.find(item => item.id === "tests")?.status || "pending",
-    entry: state.items.find(item => item.id === "entry")?.status || "pending",
-  };
-  for (const [stage, status] of Object.entries(stages)) ui[`progress-${stage}`].dataset.state = status;
   ApprovalPanel();
   if (follow) ui.timeline.scrollTop = ui.timeline.scrollHeight;
 }
