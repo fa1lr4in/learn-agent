@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import checkpoints, commands
 from .permissions import resolve_python_path, resolve_workspace_path, resolve_write_path
+from .planning import PlanError
 
 
 RUN_TIMEOUT = 10
@@ -180,6 +181,7 @@ class Tool:
     validate: Callable[[dict], object]
     prepare: Callable[[dict], PreparedTool]
     read_only: bool = False
+    internal: bool = False
 
     def validate_arguments(self, arguments: dict) -> None:
         """Check fields first, then apply the tool's own value/path checks."""
@@ -282,11 +284,11 @@ def _prepare_command(arguments: dict) -> PreparedTool:
     return PreparedTool(action, lambda: commands.run_command(argv, path, timeout))
 
 
-TOOL_ERRORS = (EditConflict, subprocess.TimeoutExpired, OSError, UnicodeError)
+TOOL_ERRORS = (EditConflict, PlanError, subprocess.TimeoutExpired, OSError, UnicodeError)
 
 
 def tool_error(tool: Tool, arguments: dict, error: Exception) -> dict:
-    if isinstance(error, (EditConflict, checkpoints.CheckpointConflict)):
+    if isinstance(error, (EditConflict, PlanError, checkpoints.CheckpointConflict)):
         message = str(error)
     elif isinstance(error, subprocess.TimeoutExpired):
         message = f"运行超过 {RUN_TIMEOUT} 秒，Python 子进程已终止。"

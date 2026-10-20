@@ -10,6 +10,7 @@ from .context import ContextLimitError, print_context, select_context
 from .events import EventRecorder, record_event
 from .model import call_model
 from .permissions import PermissionPolicy, approve_tool
+from .planning import TaskPlan
 
 
 MAX_MODEL_CALLS = 8
@@ -17,14 +18,22 @@ MAX_MODEL_CALLS = 8
 
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
               budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False,
-              denied_tools: tuple[str, ...] = ()) -> str:
+              denied_tools: tuple[str, ...] = (), plan_enabled: bool = False) -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
-    request = {**payload, "tools": tools.tool_schemas(), "tool_choice": "auto"}
+    registry = dict(tools.TOOL_REGISTRY)
+    plan = TaskPlan(log_file) if plan_enabled else None
+    if plan is not None:
+        plan_tool = plan.as_tool()
+        registry[plan_tool.schema["function"]["name"]] = plan_tool
+    request = {**payload, "tools": [tool.schema for tool in registry.values()], "tool_choice": "auto"}
     summary_cache = None
     policy = PermissionPolicy(auto_read, denied_tools)
     for step in range(1, budget.max_model_calls + 1):
+        if plan is not None:
+            system = {**payload["messages"][0], "content": payload["messages"][0]["content"] + plan.context()}
+            request = {**request, "messages": [system, *request["messages"][1:]]}
         api_request = request
         context_details = {}
         if context_chars is not None:
@@ -97,6 +106,9 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             else:
                 print("\n[助手最终回答]")
                 print(message.get("content") or "（本次没有返回文本回答）")
+            if plan is not None and not plan.complete():
+                print("任务暂停：计划尚未全部完成，或完成证据已过时；模型回答完整不代表计划已完成。")
+                return "plan_incomplete"
             return "stop"
         if finish_reason != "tool_calls":
             if finish_reason == "length":
@@ -125,7 +137,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             call_ids.add(call_id)
             function = tool_call["function"]
             name = function["name"]
-            tool = tools.TOOL_REGISTRY.get(name)
+            tool = registry.get(name)
             if tool is None:
                 raise ValueError("未知工具，未执行。")
             arguments = json.loads(function["arguments"])
@@ -138,11 +150,11 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
         ]
         for tool_call, name, tool, arguments in prepared_calls:
             try:
-                decision = policy.decide(name, tool.read_only)
+                decision = policy.decide(name, tool.read_only, tool.internal)
                 prepared = None if decision == "deny" else tool.prepare(arguments)
                 if decision == "ask":
                     record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"])
-                approved, source = approve_tool(prepared.action if prepared else name, decision)
+                approved, source = approve_tool(prepared.action if prepared else name, decision, "internal" if tool.internal else "auto_read")
                 record_event(log_file, "tool_approval", step=step, tool=name, tool_call_id=tool_call["id"], approved=approved, source=source, decision=decision)
                 if not approved:
                     print("已停止：未执行被拒绝的工具及本轮后续工具，也不会继续请求模型；此前已完成的操作保留。")
@@ -155,6 +167,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             print("\n[工具执行结果]")
             print(json.dumps(result, ensure_ascii=False, indent=2))
             record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)
+            if plan is not None:
+                plan.observe(tool_call["id"], result)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)})
             if result.get("cleanup_succeeded") is False:
                 print("已停止：无法确认命令进程树已经清理；不执行后续工具或请求模型，请先核对现场。")
