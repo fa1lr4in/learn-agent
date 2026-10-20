@@ -1,6 +1,7 @@
 import io
 import json
 import socket
+import sys
 import tempfile
 import time
 import unittest
@@ -29,6 +30,80 @@ class DeltaProvider(OfflineProvider):
 
 def wire(frame):
     return f"id: {frame['id']}\nevent: {frame['event']}\ndata: {json.dumps(frame, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+class CursorPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="learn-agent-cursor-test-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.path = self.root / "cursor.json"
+        self.previous = b'{"task_id":"task","last_event_id":"task:265"}'
+        self.path.write_bytes(self.previous)
+
+    def test_temporary_windows_denial_retries_atomic_replacement(self):
+        replace = Path.replace
+        failure = PermissionError("file in use")
+        failure.winerror = 5
+        attempts = []
+        def intermittent(source, destination):
+            attempts.append(source)
+            self.assertEqual(self.path.read_bytes(), self.previous)
+            if len(attempts) < 3:
+                raise failure
+            return replace(source, destination)
+        with patch.object(Path, "replace", intermittent), patch.object(watch_task.time, "sleep"):
+            watch_task.save_cursor(self.path, "task", "task:266")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(json.loads(self.path.read_text())["last_event_id"], "task:266")
+        self.assertEqual(list(self.root.glob(".watch-*")), [])
+
+    def test_persistent_denial_is_bounded_and_preserves_previous_cursor(self):
+        for code in (5, 32, 33):
+            failure = PermissionError("file in use")
+            failure.winerror = code
+            with self.subTest(winerror=code), patch.object(Path, "replace", side_effect=failure) as replace, \
+                    patch.object(watch_task.time, "sleep"), self.assertRaisesRegex(PermissionError, "--resume"):
+                watch_task.save_cursor(self.path, "task", "task:266")
+            self.assertEqual(replace.call_count, 6)
+            self.assertEqual(self.path.read_bytes(), self.previous)
+            self.assertEqual(list(self.root.glob(".watch-*")), [])
+
+    def test_other_filesystem_errors_fail_without_retry(self):
+        for failure in (FileNotFoundError("directory removed"), PermissionError("permission denied")):
+            with self.subTest(error=type(failure).__name__), patch.object(Path, "replace", side_effect=failure) as replace, \
+                    patch.object(watch_task.time, "sleep") as sleep, self.assertRaises(type(failure)):
+                watch_task.save_cursor(self.path, "task", "task:266")
+            replace.assert_called_once()
+            sleep.assert_not_called()
+            self.assertEqual(self.path.read_bytes(), self.previous)
+            self.assertEqual(list(self.root.glob(".watch-*")), [])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows file-sharing regression")
+    def test_real_windows_read_handle_can_close_during_retry(self):
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                      wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        # Permit reading and writing, but not deletion/replacement while the handle is open.
+        handle = kernel.CreateFileW(str(self.path), 0x80000000, 3, None, 3, 0x80, None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        def release(*args):
+            nonlocal handle
+            if handle is not None:
+                kernel.CloseHandle(handle)
+                handle = None
+        self.addCleanup(release)
+        with patch.object(watch_task.time, "sleep", side_effect=release) as sleep:
+            watch_task.save_cursor(self.path, "task", "task:266")
+        sleep.assert_called_once()
+        self.assertEqual(json.loads(self.path.read_text())["last_event_id"], "task:266")
+        self.assertEqual(list(self.root.glob(".watch-*")), [])
 
 
 class SseProtocolTests(unittest.TestCase):

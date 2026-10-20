@@ -62,7 +62,7 @@
 
 第七篇公众号正文与截图已由使用者处理完成：[从零开发 Agent（七）：接入扩展，用固定任务检验效果](<公众号文章/07-项目指令扩展与固定任务评测/从零开发 Agent（七）：接入扩展，用固定任务检验效果.md>)。已回到开发与教学，文章、图片和原始评测报告继续保留。
 
-第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课已实现 SSE 任务事件、快照游标、断线补收与观察客户端；新增 16 项协议和真实本机 HTTP 测试，完整累计 466 项通过，真实 DeepSeek 事件流验收待使用者反馈。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
+第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后的客户端待使用者复查。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
 
 ## 前端交互示例
 
@@ -319,15 +319,20 @@ $apiResult.summary | ConvertTo-Json -Depth 5
 ```powershell
 $sseCursorFile = Join-Path .\logs ('.watch-' + $apiTask.id + '.json')
 $sseCursor = Get-Content -LiteralPath $sseCursorFile -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($sseCursor.last_event_id -ne $apiResult.last_event_id) { throw '观察客户端尚未接收最后一条事件。' }
-Write-Host '观察客户端与任务快照的最后游标一致。'
+if ($sseCursor.last_event_id -ne $apiResult.last_event_id) {
+    throw '观察客户端尚未接收最后一条事件，请在观察终端用 --resume 补收，不要重新提交任务。'
+} else {
+    Write-Host '观察客户端与任务快照的最后游标一致。'
+}
 .\.venv\Scripts\python.exe -B -X utf8 watch_task.py $apiTask.id
 .\.venv\Scripts\python.exe -B -X utf8 tool_call.py --status $apiResult.log_path
 ```
 
 验收目标：主动断开时任务仍等待确认；续收序号继续递增，两次操作仍分别确认；真实测试与入口结果和上一课一致；model_delta 数量大于 0；task_finished、快照、JSONL 的 completed / stop 一致，session_saved=true，最后游标一致。观察、重新获取快照和补收不计入模型次数，不把事件数量当成模型调用次数。
 
-新增 16 项测试覆盖 SSE 帧解析、实际本机 TCP 推送、快照到订阅之间的事件、主动断开和补收、多个观察者、跨任务游标拒绝、保活、预算暂停、保存失败通知及观察客户端入口；完整 466 项通过。测试使用固定模型回复，未代替使用者的 DeepSeek 联合验收。后端关闭时设置持续 HTTP 连接的退出等待上限，后台任务仍按原有取消边界收尾。
+Windows 上游标文件被短暂占用时，观察客户端会在原子替换失败后有限重试（最多 6 次尝试，总等待约 0.775 秒）。持续拒绝访问时保留原游标并退出，后台任务继续运行；释放占用或修正写入权限后，用同一 task_id 加 --resume 补收，无需重启后端或重新提交任务。最后一条事件可能重复显示，因为显示成功不代表游标已保存。直接重新获取完成快照会保存最新游标，但不等同于补收了中间的每条事件。
+
+新增 16 项测试覆盖 SSE 帧解析、实际本机 TCP 推送、快照到订阅之间的事件、主动断开和补收、多个观察者、跨任务游标拒绝、保活、预算暂停、保存失败通知及观察客户端入口；本次补充 4 项游标保存回归测试，覆盖真实 Windows 文件占用、重试成功、持续拒绝时保留旧游标及其他文件错误，完整累计 470 项通过。离线测试使用固定模型回复；使用者真实任务另已核验，原任务从游标 265 至 339 的连续补收也已验证，模型仍为 3 次请求、8680 token。后端关闭时设置持续 HTTP 连接的退出等待上限，后台任务仍按原有取消边界收尾。
 
 ## 代码结构与工具注册
 

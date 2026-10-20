@@ -49,7 +49,17 @@ def save_cursor(path: Path, task_id: str, cursor: str) -> None:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".watch-", delete=False) as stream:
             temporary = Path(stream.name)
             json.dump({"task_id": task_id, "last_event_id": cursor}, stream)
-        temporary.replace(path)
+        for attempt in range(6):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError as error:
+                # Windows readers may temporarily deny replacement of an open file.
+                if getattr(error, "winerror", None) not in (5, 32, 33):
+                    raise
+                if attempt == 5:
+                    raise PermissionError(f"续收游标文件被占用或没有写入权限：{path}。未推进保存的游标；后台任务继续运行，可稍后用 --resume 续收。") from error
+                time.sleep(.025 * 2 ** attempt)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
