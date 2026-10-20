@@ -44,7 +44,7 @@
 - 统一用 `PermissionPolicy` 判断允许、询问、拒绝；`--deny-tool NAME` 可重复指定并优先于自动读取，文件正文、模型回复和旧历史不能自行授权，日志区分策略拒绝与人工拒绝。
 - 支持 `--instructions FILE` 显式读取项目规则，记录路径、SHA-256 与原文快照；低于当前用户任务，不改变工具权限。支持 `--plan` 提供 `update_plan`，用本次工具结果更新步骤，未完成或证据过时则暂停。
 
-模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课项目指令与任务计划已通过离线验证，新增 22 项测试，当前累计 333 项自动化测试通过；规则来源、计划修复与最终完成的真实模型验证待反馈。
+模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课首轮真实任务已修复源码、通过四项验收并输出 5050，但证据引用不清晰与失败诊断语义导致计划未闭环；已补证据字段、可用清单和预期失败诊断，新增 6 项回归，当前累计 339 项测试通过，真实计划复验待反馈。
 
 ## 代码结构与工具注册
 
@@ -239,11 +239,11 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 
 项目规则以 `[项目指令资料]` 标记，与 `current_user_task` 分开组织在当前用户消息中；系统固定说明其低于当前用户要求，不放宽权限和预算。模型如何理解约定仍需核对结果，不能把文件文字当作程序强制执行的约束。启动显示路径、SHA-256、字节数；`run_start.instructions_source` 记录这些来源信息，当前消息保存原文快照。摘要值标识读取版本，不代表内容已获信任。续聊或恢复需重新提供本次 --instructions；旧快照供回顾，不自动重新加载或沿用旧规则。
 
-`--plan` 为本次运行额外提供 `update_plan`，不改变全局工具注册表。每次传入完整 steps 列表，最多 10 项，每项为 `step`、`status`、`evidence`。状态是 pending / in_progress / completed，同时最多一项 in_progress。evidence 是本次工具调用 ID 数组；进行中步骤可以引用失败结果说明待修复，完成步骤必须引用真实成功结果，不能引用未知 ID、重复而含糊的 ID 或计划工具自己。
+`--plan` 为本次运行额外提供 `update_plan`，不改变全局工具注册表。每次传入完整 steps 列表，最多 10 项，每项为 `step`、`status`、`evidence`。状态是 pending / in_progress / completed，同时最多一项 in_progress。evidence 是本次工具调用 ID 数组，原样复制工具结果正文的 evidence_id。当前计划快照与 PlanError 反馈中的 available_evidence 列出真实编号、工具、目标、执行结果及 can_complete，可用清单不会放宽校验；不能引用未知 ID、重复而含糊的 ID 或计划工具自己。completed 默认 expected_outcome=success，要求成功且未过时的结果。对于“运行原验收、确认失败”这样的历史诊断步骤，可以显式 expected_outcome=failure，以真实非零退出码为依据；无执行结果、超时、输出截断、启动错误或清理失败均不能支撑这种完成。历史失败诊断可以保留，但不能替代修复后的最终验收成功。
 
 计划更新只修改本次内部状态，自动允许，`tool_approval.source` 为 `internal`；编辑和执行仍需确认，`--deny-tool update_plan` 仍可明确拒绝。每次更新输出步骤并记录 `plan_updated`，结果也按普通 ToolRun / Message 保存到 SQLite；每次任务模型请求携带当前计划快照，原始消息编号不变。plan_updated 不是模型调用，不额外计 API 次数；模型请求更新计划仍占用正常任务轮次。
 
-文件工具修改后，旧运行结果不能继续作为当前完成证据；同一工具、路径与参数的新运行结果也会替代旧结果，不能在后来运行失败后继续引用较早成功。此检查无法理解每个步骤的全部语义，成功读取不等于测试通过，也不能检测所有外部文件变化或命令的副作用，仍需核对真实测试对象和输出。最终 stop 时计划未建立、未完成或运行证据过时，任务为 `paused / plan_incomplete`，可显式 --recover。新运行不重放旧计划，从空计划开始，当前完成证据也需重新取得。
+文件工具修改后，旧运行结果不能继续作为当前成功验收的完成证据；同一工具、路径与参数的新运行结果也会替代旧结果，不能在后来运行失败后继续引用较早成功。此检查无法理解每个步骤的全部语义，成功读取不等于测试通过，也不能检测所有外部文件变化或命令的副作用，仍需核对真实测试对象和输出。最终 stop 时计划未建立、未完成或运行证据过时，任务为 `paused / plan_incomplete`，可显式 --recover。新运行不重放旧计划，从空计划开始，当前完成证据也需重新取得。
 
 先在临时目录准备一个有错误的求和项目：
 
@@ -282,7 +282,8 @@ $planningTask = @'
 请修复这个项目的整数求和错误，保留验收测试。本次最终回答使用中文，覆盖项目默认的英文报告约定。
 先用 update_plan 建立阅读、修复、验证三项计划。读取 main.py 与 test_main.py 后，先运行一次验收，确认实际失败再修改源码。
 测试失败后更新计划为修复中，只用 edit_file 修改 main.py；随后更新验证步骤，重新运行验收与 main.py。
-最后用实际成功工具调用 ID 将计划标为全部完成，再简要说明修改和真实结果。
+evidence 从结果正文或 available_evidence 原样复制 evidence_id，不猜编号。若把确认原测试失败单列为步骤，显式设置 expected_outcome=failure；最终验收使用 success。
+最后按各步骤预期结果将计划标为全部完成，再简要说明修改和真实结果。
 '@
 python -B -X utf8 tool_call.py --workspace $planningProject --instructions AGENTS.md --plan --auto-read --preview $planningTask
 ```
@@ -308,7 +309,32 @@ $planningEvents | Where-Object { $_.event -eq 'tool_result' } |
 python -B -X utf8 tool_call.py --status $planningLog
 ```
 
-读取和内部计划更新自动允许；首次失败验收、编辑、修复后验收和入口运行分别输入 y，模型可能增加必要的读取或确认。应先看到测试失败，再看到计划进入修复、验证，随后 4 项测试通过、main.py 输出 5050；计划最终全部 completed，包含真实调用 ID，验收文件内容比较为 True，最终 completed / stop，回答使用中文。实际请求数与计划更新次数随模型安排变化。若出现 PlanError，先看证据引用是否真实、成功且为修改后的当前结果；模型可以据反馈修正计划。若最终 plan_incomplete，不能把 stop 当作已完成，可保留日志后用同样的 --instructions 和 --plan 显式 --recover 并取得新证据。
+读取和内部计划更新自动允许；首次失败验收、编辑、修复后验收和入口运行分别输入 y，模型可能增加必要的读取或确认。应先看到测试失败，再看到计划进入修复、验证，随后 4 项测试通过、main.py 输出 5050；计划最终全部 completed，包含真实调用 ID，验收文件内容比较为 True，最终 completed / stop，回答使用中文。实际请求数与计划更新次数随模型安排变化。若出现 PlanError，按 available_evidence 修正引用，保留已有进度，不清空计划或重复错误参数。默认成功步骤检查成功和当前结果；历史失败诊断需要显式 failure。若最终 plan_incomplete，不能把 stop 当作已完成，可保留日志后用同样的 --instructions 和 --plan 显式 --recover 并取得新证据。
+
+如果源码已经修复而仅计划暂停，保留现场，使用这次暂停日志继续验证，不必重新制造错误。下面接着使用上方保存的 `$planningLog`：
+
+```powershell
+$stoppedPlanLog = $planningLog
+$planningProject = (Get-Content -LiteralPath $stoppedPlanLog -TotalCount 1 -Encoding UTF8 |
+    ConvertFrom-Json).workspace
+$verifyExistingTask = @'
+继续上次因计划未完成而暂停的任务。源码已经修复，这次只重新验证，不创建或修改任何文件，不重建错误现场。
+重新建立阅读当前源码、运行验收和入口的计划；重新读取 main.py 与 test_main.py，再运行 python -m unittest -v test_main.py 和 main.py。
+evidence 原样复制本次结果正文或 available_evidence 中的 evidence_id。用本次真实成功结果完成计划，最后用中文简要报告。
+'@
+python -B -X utf8 tool_call.py --workspace $planningProject --recover $stoppedPlanLog --instructions AGENTS.md --plan --auto-read --stream --deny-tool edit_file --deny-tool write_file --max-model-calls 12 $verifyExistingTask
+
+$verifiedPlanLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$verifiedPlanEvents = @(Get-Content -LiteralPath $verifiedPlanLog -Encoding UTF8 |
+    ForEach-Object { $_ | ConvertFrom-Json })
+($verifiedPlanEvents | Where-Object { $_.event -eq 'plan_updated' } | Select-Object -Last 1).steps |
+    Select-Object step, status, expected_outcome, @{Name='evidence'; Expression={ $_.evidence -join ', ' }} |
+    Format-Table -Wrap -AutoSize
+python -B -X utf8 tool_call.py --status $verifiedPlanLog
+```
+
+应只重新确认验收和入口执行，测试继续通过、入口输出 5050、计划全部 completed，最终 completed / stop。恢复建立本次新计划并取得新证据，不重放旧编辑。首轮真实任务中所谓“计划重置”来自模型主动提交全 pending 的更新，并非程序自动丢失状态；新提示明确要求保留已有进度，错误后按清单修正。
 
 ## 浏览多文件项目
 
@@ -1076,6 +1102,8 @@ python -m unittest discover -s tests -v
 第 35 课新增 `tests/test_permissions.py` 的 15 项测试，累计 311 项通过。覆盖七种内置工具的默认确认、只读自动允许、明确拒绝优先且不进入准备、策略拒绝与人工拒绝的状态和 SQLite 来源区分、资料及模型的授权声明无效、同批剩余工具停止、已完成结果保留、恢复时 NotExecuted 与重新授权、本次策略不从历史继承、非法权限参数与越界拦截、预览和错误工具名的离线行为。README 三组命令已在本机 Windows PowerShell 5.1 的临时项目中按顺序验证：读取自动允许，编辑和运行分别确认后实际输出 5051；执行与读取明确拒绝均为 cancelled / policy_denied 且没有 tool_started 或 tool_result。模型及流式回调使用模拟数据，文件读写、Python 与 SQLite 实际执行，未调用付费 API。使用者随后完成真实模型验收：编辑与运行仍分别确认，输出 5051，最终 completed / stop；两类禁用都直接拒绝、没有工具执行结果，最终 cancelled / policy_denied。
 
 第 36 课新增 `tests/test_instructions_and_plan.py` 的 22 项测试，累计 333 项通过。覆盖显式加载与关闭时兼容、UTF-8 BOM 与来源摘要值、非法路径和超限/无效文本在联网前停止、项目资料不能授权、续聊使用本次规则、计划工具按运行启用且不污染注册表、内部自动允许与明确拒绝、真实失败测试后更新计划并编辑重验、虚构/失败/自引用/重复编号证据拒绝、源码修改或同一运行后来失败时旧成功失效、不同运行目标证据共存、未建立或未完成计划暂停及显式恢复、整批参数检查、token 暂停和上下文中的当前快照。README 两段命令已在 Windows PowerShell 5.1 的独立临时副本顺序验证，真实读取/编辑、四项 unittest 和入口执行、SQLite 保存；模型网络使用模拟 JSON/SSE，经过真实流式读取代码，不调用付费 API。失败后进入修复和验证、最终计划全部完成、入口 5050、4 次人工确认、验收脚本内容未变，最终 completed / stop；真实模型运行待使用者验证。
+
+第 36 课计划反馈修复新增 6 项回归测试，累计 339 项通过。先复现旧实现缺少 evidence_id、错误反馈无可用清单，以及无法完成预期失败诊断，再修正。新增用例从返回正文动态发现编号，不预先替模型写好证据；覆盖错误引用后按清单修正、真实失败验收—历史诊断完成—局部修复—通过验收的完整流程、失败诊断在修复后保留，以及无执行/超时/截断/清理失败/错误结果不能冒充预期失败。原有默认成功与过时证据拦截继续通过。上述恢复命令也已在 Windows PowerShell 5.1 验证：复制使用者的暂停日志与正确项目，在副本重新读取、两次确认执行、4 项测试通过、入口 5050、计划全部完成、最终 completed / stop；使用模拟模型网络和真实 SSE 读取、SQLite 保存，原文件与日志未改动，不调用付费 API。用户已真实完成源码修复与验收，但计划闭环仍待修复后复验；不把该轮 paused / plan_incomplete 记作整课验收成功。
 
 ## 许可证
 

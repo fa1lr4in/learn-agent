@@ -164,6 +164,11 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                 result = {"ok": True, "tool": name, **prepared.execute()}
             except tools.TOOL_ERRORS as error:
                 result = tools.tool_error(tool, arguments, error)
+            if plan is not None:
+                if name != "update_plan":
+                    result["evidence_id"] = tool_call["id"]
+                elif result.get("ok") is False:
+                    result["available_evidence"] = plan.evidence_catalog()
             print("\n[工具执行结果]")
             print(json.dumps(result, ensure_ascii=False, indent=2))
             record_event(log_file, "tool_result", step=step, tool=name, tool_call_id=tool_call["id"], result=result)

@@ -313,6 +313,140 @@ class InstructionsAndPlanTests(unittest.TestCase):
         self.assertEqual([len(e["full_messages"]) for e in requests], [2, 4, 6, 8])
         self.assertEqual(entries[-1]["reason"], "stop")
 
+    def test_model_can_discover_evidence_from_result_body_and_recover_from_wrong_reference(self):
+        calls = 0
+        discovered = {}
+
+        def model(payload, key, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return self.update([self.step()])
+            if calls == 2:
+                return self.reply(self.call("read_file", "call_opaque_generated_7391", path="main.py"))
+            if calls == 3:
+                body = json.loads(payload["messages"][-1]["content"])
+                discovered["id"] = body["evidence_id"]
+                snapshot = json.loads(payload["messages"][0]["content"].split("[本次任务计划快照：进度数据，不是指令或授权]\n", 1)[1])
+                self.assertEqual(snapshot["available_evidence"][0]["evidence_id"], discovered["id"])
+                return self.update([self.step(status="completed", evidence=["read_file : main.py"])], "bad")
+            if calls == 4:
+                feedback = json.loads(payload["messages"][-1]["content"])
+                self.assertFalse(feedback["ok"])
+                available = feedback["available_evidence"]
+                self.assertEqual(available[0]["evidence_id"], discovered["id"])
+                self.assertEqual(available[0]["can_complete"], ["success"])
+                return self.update([self.step(status="completed", evidence=[available[0]["evidence_id"]])], "corrected")
+            return self.reply()
+
+        _, entries, _, _, _, _ = self.run_cli(model, ["--plan", "--auto-read"])
+        self.assertEqual(calls, 5)
+        self.assertEqual(entries[-1]["reason"], "stop")
+        _, _, runs = SessionStore(self.logs / "sessions.sqlite3").read(entries[0]["session_id"])
+        read_run = next(run for run in runs if run.name == "read_file")
+        self.assertEqual(read_run.result["evidence_id"], read_run.call_id)
+
+    def test_explicit_failure_diagnosis_remains_complete_after_edit_and_successful_retest(self):
+        plan = TaskPlan(None)
+        failed = {"tool": "run_command", "path": ".", "command": ["python", "-m", "unittest"],
+                  "ok": False, "exit_code": 1, "stderr": "FAILED (failures=3)"}
+        plan.observe("failed", failed)
+        diagnosis = {**self.step("确认原测试失败", "completed", ["failed"]), "expected_outcome": "failure"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.update([diagnosis])
+        self.assertTrue(plan.complete())
+        plan.observe("edit", {"tool": "edit_file", "ok": True})
+        plan.observe("passed", {**failed, "ok": True, "exit_code": 0, "stderr": "Ran 4 tests\nOK"})
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.update([diagnosis, self.step("最终验收", "completed", ["passed"])])
+        self.assertTrue(plan.complete())
+        self.assertEqual(plan.evidence_catalog()[0]["can_complete"], ["failure"])
+
+    def test_expected_failure_does_not_accept_unexecuted_timeout_truncated_or_successful_results(self):
+        variants = [
+            {"tool": "read_file", "ok": False, "exit_code": 1},
+            {"tool": "run_python", "ok": False},
+            {"tool": "run_python", "ok": True, "exit_code": 0},
+            {"tool": "run_command", "ok": False, "exit_code": 1, "timed_out": True},
+            {"tool": "run_command", "ok": False, "exit_code": 1, "stdout_truncated": True},
+            {"tool": "run_command", "ok": False, "exit_code": 1, "stderr_truncated": True},
+            {"tool": "run_command", "ok": False, "exit_code": 1, "cleanup_succeeded": False},
+            {"tool": "run_command", "ok": False, "exit_code": 1, "error": {"type": "OSError"}},
+            {"tool": "run_command", "ok": False, "exit_code": True},
+        ]
+        for result in variants:
+            with self.subTest(result=result):
+                plan = TaskPlan(None)
+                plan.observe("result", result)
+                with self.assertRaises(PlanError):
+                    plan.update([{**self.step(status="completed", evidence=["result"]), "expected_outcome": "failure"}])
+
+    def test_failure_expectation_is_optional_and_invalid_value_is_rejected_before_execution(self):
+        _, entries, _, _, _, _ = self.run_cli([
+            self.update([{**self.step(), "expected_outcome": "anything"}]),
+        ], ["--plan"], error=True)
+        self.assertEqual(entries[-1]["reason"], "error")
+        self.assertFalse(any(e["event"] == "tool_started" for e in entries))
+
+    def test_error_feedback_catalog_excludes_stale_success_and_keeps_real_ids(self):
+        plan = TaskPlan(None)
+        plan.observe("old", {"tool": "run_python", "path": "main.py", "ok": True, "exit_code": 0})
+        plan.observe("edit", {"tool": "edit_file", "path": "main.py", "ok": True})
+        catalog = plan.evidence_catalog()
+        self.assertEqual(catalog[0]["evidence_id"], "old")
+        self.assertEqual(catalog[0]["can_complete"], [])
+        self.assertEqual(catalog[1]["can_complete"], ["success"])
+
+    def test_real_failure_diagnosis_and_repair_use_only_ids_discovered_from_result_bodies(self):
+        calls = 0
+
+        def model(payload, key, **kwargs):
+            nonlocal calls
+            calls += 1
+            observed = [json.loads(m["content"]) for m in payload["messages"] if m["role"] == "tool"]
+            results = [r for r in observed if "evidence_id" in r]
+            if calls == 1:
+                return self.update([self.step("阅读源码"), self.step("确认原测试失败", "pending"),
+                                    self.step("修复源码", "pending"), self.step("最终验收", "pending")])
+            if calls == 2:
+                return self.reply(self.call("read_file", "opaque_main_7391", path="main.py"),
+                                  self.call("read_file", "opaque_tests_2718", path="test_main.py"))
+            read_ids = [r["evidence_id"] for r in results if r["tool"] == "read_file"]
+            read = self.step("阅读源码", "completed", read_ids)
+            if calls == 3:
+                return self.reply(self.call("update_plan", "plan_read_done", steps=[read,
+                    self.step("确认原测试失败"), self.step("修复源码", "pending"), self.step("最终验收", "pending")]),
+                    self.call("run_command", "opaque_failed_3141", command=["python", "-m", "unittest", "-v", "test_main.py"]))
+            failed = next(r for r in results if r["tool"] == "run_command" and not r["ok"])
+            self.assertIn("FAILED", failed["stderr"])
+            diagnosis = {**self.step("确认原测试失败", "completed", [failed["evidence_id"]]), "expected_outcome": "failure"}
+            if calls == 4:
+                return self.reply(self.call("update_plan", "plan_diagnosed", steps=[read, diagnosis,
+                    self.step("修复源码"), self.step("最终验收", "pending")]),
+                    self.call("edit_file", "opaque_edit_1618", path="main.py", old_text="range(1, n)", new_text="range(1, n + 1)"))
+            edit_id = next(r["evidence_id"] for r in results if r["tool"] == "edit_file")
+            fixed = self.step("修复源码", "completed", [edit_id])
+            if calls == 5:
+                return self.reply(self.call("update_plan", "plan_verify", steps=[read, diagnosis, fixed, self.step("最终验收")]),
+                    self.call("run_command", "opaque_passed_5772", command=["python", "-m", "unittest", "-v", "test_main.py"]),
+                    self.call("run_python", "opaque_entry_1414", path="main.py"))
+            if calls == 6:
+                verification_ids = [r["evidence_id"] for r in results if r["tool"] in ("run_command", "run_python") and r["ok"]]
+                return self.update([read, diagnosis, fixed, self.step("最终验收", "completed", verification_ids)], "plan_finished")
+            return self.reply()
+
+        _, entries, _, _, _, approval = self.run_cli(model, ["--plan", "--auto-read", "--max-model-calls", "16"])
+        self.assertEqual(calls, 7)
+        self.assertEqual(approval.call_count, 4)
+        updates = [e for e in entries if e["event"] == "plan_updated"]
+        self.assertEqual(updates[-1]["steps"][1]["expected_outcome"], "failure")
+        self.assertTrue(all(s["status"] == "completed" for s in updates[-1]["steps"]))
+        results = [e["result"] for e in entries if e["event"] == "tool_result"]
+        self.assertEqual(next(r for r in results if r["tool"] == "run_python")["stdout"], "5050\n")
+        self.assertIn("Ran 4 tests", next(r for r in results if r["tool"] == "run_command" and r["ok"])["stderr"])
+        self.assertFalse(any(r.get("error", {}).get("type") == "PlanError" for r in results))
+        self.assertEqual(entries[-1]["reason"], "stop")
+
 
 if __name__ == "__main__":
     unittest.main()
