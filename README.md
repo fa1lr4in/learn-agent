@@ -46,10 +46,13 @@
 - 增加 `ModelProvider` / `DeepSeekProvider` 适配层，集中构造请求并将回复转为 `ModelResponse`；工具循环和语义摘要通过同一适配器调用模型，日志记录 provider，用量继续共用预算。
 - 支持 `--mcp-demo`：用官方 MCP Python SDK 经 stdio 连接独立的本地求和服务，发现工具并仅在本次运行中接入；外部工具逐次确认，支持明确禁用、参数检查、计划证据、日志和会话恢复。
 - 支持 `--skill DIR` 显式加载 `SKILL.md` 做事指南；`--plugin DIR` 加载带版本的本地 Python 工具插件。两者独立开关，不改核心循环；插件逐次确认，预览只读清单和源码，不执行插件代码。
+- 支持 `--subagent` 提供 `delegate_readonly`：确认后串行委派只读检查，子任务使用独立上下文和受限工具表，继承本次读取权限与禁用策略，与父任务共用模型次数和 token 预算；保存独立日志并返回报告、来源和用量。
 
 模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
 
 第 39 课已真实验收：Skill 原文与插件工具说明进入请求，两次插件检查和验收/入口运行分别由 user 确认，静态结构与源码一致，四项测试通过、stdout 5050，最终按指南报告并 completed / stop。日志 run-20261020-165129-268468.jsonl 与 SQLite 相符，4 次请求累计 14917 token、用量完整，扩展来源哈希与实际文件一致；完整自动化测试累计 388 项通过。第 38 课按使用者要求暂缓，保留待验收状态。
+
+第 40 课已实现只读子 Agent，新增 20 项测试，完整累计 408 项通过；真实 DeepSeek 复验待反馈。实现和验证范围见下面“委派只读子任务”。
 
 ## 代码结构与工具注册
 
@@ -68,6 +71,7 @@ learn_agent/
   compaction.py         模型语义摘要请求、结构校验、来源记录与同运行摘要合并
   instructions.py       显式项目规则读取、来源与版本标识、当前用户任务分隔
   extensions.py         本次 Skill 加载、插件清单检查、确认后执行与来源快照
+  subagents.py          独立只读子任务、共享预算、来源报告与子任务日志
   planning.py           本次任务步骤、证据引用与有效性检查、内部计划工具
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
@@ -240,6 +244,83 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 预期同样直接拒绝、没有读取结果，最终 `cancelled / policy_denied`。若模型没有提出指定工具，不能把仅返回文字当作拦截验证成功，应以 `tool_approval.decision: deny` 为证据。
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
+
+## 委派只读子任务
+
+第 40 课增加 `--subagent`，向主 Agent 提供 `delegate_readonly(task)`。主 Agent 把一项明确的阅读检查交出去，程序用同一个模型适配器启动一次新的 Agent 循环。子 Agent 只接收新系统说明、委派描述与本次显式项目规则，不复制父会话历史、Skill、插件、MCP 工具或计划。它与父 Agent 使用同一个 DeepSeek 模型、同一个 workspace 和同一个 Python 进程；独立的是消息上下文与工具表。
+
+子 Agent 的实际工具表只有 `list_files`、`search_text`、`read_file`。因此即使模型请求写入、运行或继续委派，程序也会在执行前拦截。`--deny-tool read_file` 等禁用策略同样传入子任务。委派本身需要确认，即使有 `--auto-read`；子任务里的内置读取按本次 `--auto-read` 策略处理，没有开启时仍逐次确认。这个边界由程序实际传入的工具表和权限控制，并非只靠提示词。
+
+当前为串行、单层委派，父任务等待子任务结束。子任务最多 4 次模型请求，包含最终报告所需请求；父任务的 `--max-model-calls`、`--max-total-tokens` 是共享总预算，子任务不会另领一份额度。汇总分别统计 `task_model_calls`、`summary_model_calls`、`subagent_model_calls`，总 token 包含三者。子任务继承 `--context-chars`；这版不在子任务内做语义摘要，必要内容放不下时返回未完成。
+
+子任务有成功读取记录并返回至多 4000 字符的完整报告时，委派结果才是 `ok: true`。结果包含 `child_id`、`child_log`、`report`、`evidence`、`model_calls`、`usage` 和 `code_executed: false`。`report_source: model` 表明报告是模型解释，需结合来源核对；`evidence` 记录真实工具编号和相对路径，读取记录另附 `content_utf8_sha256`，它是读取结果经 UTF-8 编码的文本哈希，不是原文件字节哈希。`ok: true` 表示本次只读检查完成，不表示项目没有缺陷或测试已经通过。
+
+父任务在 JSONL 中记录 `subagent_start`、`subagent_end`，子任务的完整请求、回复、读取和状态保存在独立的 `run-时间.child-ID.jsonl`。父任务 SQLite 只保存委派调用及其报告/来源引用，不把子任务的全部对话混进父消息，不单独创建子会话。恢复父会话不重放子任务；新任务要再委派，应再次提供 `--subagent` 并重新确认。
+
+以下例子建立一个有意漏加上界的小项目，让子 Agent 静态发现问题；本次不运行测试、不修复文件。命令在仓库根目录执行，使用已建立的 .venv Python，无新增依赖：
+
+```powershell
+$agentPython = '.\.venv\Scripts\python.exe'
+$childProject = Join-Path ([System.IO.Path]::GetTempPath()) ('learn-agent-child-demo-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $childProject | Out-Null
+@'
+def sum_to(n):
+    return sum(range(1, n))
+
+if __name__ == '__main__':
+    print(sum_to(100))
+'@ | Set-Content -LiteralPath (Join-Path $childProject 'main.py') -Encoding UTF8
+@'
+import unittest
+from main import sum_to
+
+class SumTests(unittest.TestCase):
+    def test_zero(self): self.assertEqual(sum_to(0), 0)
+    def test_one(self): self.assertEqual(sum_to(1), 1)
+    def test_ten(self): self.assertEqual(sum_to(10), 55)
+    def test_hundred(self): self.assertEqual(sum_to(100), 5050)
+
+if __name__ == '__main__':
+    unittest.main()
+'@ | Set-Content -LiteralPath (Join-Path $childProject 'test_main.py') -Encoding UTF8
+$childTask = '请调用一次 delegate_readonly，把以下任务交给子 Agent：只读取 main.py 与 test_main.py，核对 sum_to 的实现是否符合四组断言，给出问题所在、源码路径和建议，只做静态分析，不修改或运行文件。你自己不要读取或运行源码；收到子任务结果后，用中文简要汇总结论、来源、未验证事项，并明确尚未运行测试。'
+& $agentPython -B -X utf8 tool_call.py --workspace $childProject --subagent --auto-read --preview $childTask
+& $agentPython -B -X utf8 tool_call.py --workspace $childProject --subagent --auto-read --stream --max-model-calls 12 $childTask
+```
+
+预览会多一个 `delegate_readonly` 工具，不创建子任务或联网。实际运行中，确认委派时输入 `y`。应看到子 Agent 开始/结束提示、独立日志与子任务用量；两份文件的读取自动允许。报告应定位 `main.py` 第 2 行的 `range(1, n)` 漏掉上界，建议改为 `range(1, n + 1)`；结论来自源码分析，不得声称测试已运行。委派应返回 `ok: true`、`reason: stop`、两份文件的读取来源和 `code_executed: false`，父任务最终 `completed / stop`。具体轮次数由模型决定。
+
+完成后立即保存父日志路径，再由委派结果找到子日志，避免把子日志误当父日志：
+
+```powershell
+$parentLog = (Get-ChildItem -LiteralPath .\logs -Filter *.jsonl -File |
+    Where-Object { $_.Name -notlike '*.child-*' } |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$parentEvents = @(Get-Content -LiteralPath $parentLog -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+$delegation = ($parentEvents | Where-Object { $_.event -eq 'tool_result' -and $_.tool -eq 'delegate_readonly' } | Select-Object -First 1).result
+$delegation | ConvertTo-Json -Depth 8
+$childLog = $delegation.child_log
+$childEvents = @(Get-Content -LiteralPath $childLog -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+$childEvents | Where-Object { $_.event -eq 'model_request' } | Select-Object -First 1 |
+    ForEach-Object { $_.payload.messages } | ConvertTo-Json -Depth 8
+($parentEvents | Select-Object -Last 1).summary | ConvertTo-Json -Depth 5
+python -B -X utf8 tool_call.py --status $parentLog
+python -B -X utf8 tool_call.py --status $childLog
+```
+
+子任务第一次请求的 messages 应只有系统说明和委派内容两项；子日志模型请求中 tools 只有三个只读工具。父日志的汇总请求数等于父请求、摘要请求与子请求之和；不要仅数父日志里的 model_request 来推断总用量，子请求保存在子日志中。
+
+如需验证取消，用同一临时项目再运行一次，去掉 `--auto-read`：
+
+```powershell
+& $agentPython -B -X utf8 tool_call.py --workspace $childProject --subagent --stream --max-model-calls 12 $childTask
+```
+
+先对委派输入 `y`，等到子 Agent 请求读取文件的确认提示时按 Ctrl+C。子任务和父任务都应结束为 `cancelled`；父委派结果记录取消原因，不再发送后续模型请求。读取拒绝或策略禁用也会停止父任务。子任务耗尽共享预算时父任务暂停，并保留报告或失败结果；同批剩余工具不执行。需要恢复时，仍按父日志的 `--recover` 或 `--resume` 规则处理，旧子任务不会自动运行。
+
+新增 `tests/test_subagents.py` 的 20 项离线测试，完整累计 408 项通过。覆盖默认关闭、预览无副作用、独立消息与受限工具表、项目规则、委派确认/拒绝/禁用、子读取权限、越权与路径逃逸拦截、父子共用次数和 token、缺失用量、子任务局部上限、结果与读取来源、无读取/超长报告失败、取消和恢复、不自动继承委派能力，以及子上下文字符预算。网络调用均模拟，读取与 SQLite/JSONL 保存使用真实临时文件。真实 DeepSeek 验收待使用者反馈。
+
+上述正常与取消命令已在 Windows PowerShell 5.1 的独立临时项目离线验证：模拟模型回复和确认输入，真实读取两份文件、生成父子日志并保存 SQLite。正常流程共 4 次模型请求（父 2、子 2），两份读取来源、独立消息与受限工具表均正确，父子 completed / stop；子读取确认处模拟 Ctrl+C 后，父子均 cancelled，未执行读取或继续请求模型。示例项目文件保持原样，使用者原有练习文件、文章、图片与日志未改动。
 
 ## 加载 Skill 与本地插件
 

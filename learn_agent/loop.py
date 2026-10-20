@@ -19,12 +19,14 @@ MAX_MODEL_CALLS = 8
 def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | None = None, auto_read: bool = False,
               budget: RunBudget | None = None, context_chars: int | None = None, semantic_compact: bool = False,
               denied_tools: tuple[str, ...] = (), plan_enabled: bool = False,
-              provider: ModelProvider | None = None, extra_tools: tuple[tools.Tool, ...] = ()) -> str:
+              provider: ModelProvider | None = None, extra_tools: tuple[tools.Tool, ...] = (),
+              tool_names: tuple[str, ...] | None = None, max_steps: int | None = None,
+              call_purpose: str = "task") -> str:
     if not isinstance(log_file, EventRecorder):
         log_file = EventRecorder(log_file)
     budget = budget if budget is not None else RunBudget(MAX_MODEL_CALLS)
     provider = provider if provider is not None else DeepSeekProvider()
-    registry = dict(tools.TOOL_REGISTRY)
+    registry = dict(tools.TOOL_REGISTRY) if tool_names is None else {name: tools.TOOL_REGISTRY[name] for name in tool_names}
     for tool in extra_tools:
         name = tool.schema["function"]["name"]
         if name in registry or name == "update_plan":
@@ -37,7 +39,13 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
     request = {**payload, "tools": [tool.schema for tool in registry.values()], "tool_choice": "auto"}
     summary_cache = None
     policy = PermissionPolicy(auto_read, denied_tools)
-    for step in range(1, budget.max_model_calls + 1):
+    step_limit = max_steps if max_steps is not None else budget.max_model_calls
+    for step in range(1, step_limit + 1):
+        reason = budget.pause_reason() or ("max_model_calls" if budget.model_calls >= budget.max_model_calls else None)
+        if reason:
+            record_event(log_file, "budget_paused", reason=reason, full_messages=request["messages"])
+            print(f"任务预算已停止（{reason}），未请求下一轮模型。")
+            return reason
         if plan is not None:
             system = {**payload["messages"][0], "content": payload["messages"][0]["content"] + plan.context()}
             request = {**request, "messages": [system, *request["messages"][1:]]}
@@ -73,9 +81,11 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             else:
                 print(f"\n[第 {step} 次请求里的消息历史]")
                 print(json.dumps(api_request["messages"], ensure_ascii=False, indent=2))
-        budget.start_call()
+        budget.start_call(call_purpose)
         record_event(log_file, "model_request", step=step, call_index=budget.model_calls, payload=api_request, **context_details)
         reply_label = f"第 {step} 轮任务回复；总第 {budget.model_calls} 次模型请求" if semantic_compact else f"第 {step} 次模型回复"
+        if call_purpose == "subagent":
+            reply_label = f"子 Agent 第 {step} 次模型回复"
         if request.get("stream"):
             print(f"\n[{reply_label}：流式接收]", flush=True)
             tool_notice = False
@@ -96,7 +106,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
         else:
             response = provider.complete(api_request, api_key)
         record_event(log_file, "model_response", step=step, response=response.as_dict())
-        budget.observe(response.as_dict())
+        budget.observe(response.as_dict(), call_purpose)
         message = response.message
         if not request.get("stream"):
             print(f"\n[{reply_label}]")
@@ -127,8 +137,9 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             print("已达到总 token 停止阈值。" if budget_reason == "max_total_tokens" else "服务未提供有效的总 token 用量，无法继续核对预算。")
             print("任务暂停：未执行本轮工具，不再请求模型；此前已完成的操作保留。")
             return budget_reason
-        if budget.model_calls >= budget.max_model_calls:
-            print(f"已达到最多 {budget.max_model_calls} 次模型请求，任务未完成；未执行本轮工具。")
+        if budget.model_calls >= budget.max_model_calls or step >= step_limit:
+            reached_limit = budget.max_model_calls if budget.model_calls >= budget.max_model_calls else step_limit
+            print(f"已达到最多 {reached_limit} 次模型请求，任务未完成；未执行本轮工具。")
             return "max_model_calls"
 
         calls = message.get("tool_calls") or []
@@ -154,7 +165,7 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             *request["messages"],
             {"role": "assistant", "content": message.get("content"), "tool_calls": calls},
         ]
-        for tool_call, name, tool, arguments in prepared_calls:
+        for index, (tool_call, name, tool, arguments) in enumerate(prepared_calls):
             try:
                 decision = policy.decide(name, tool.read_only, tool.internal)
                 prepared = None if decision == "deny" else tool.prepare(arguments)
@@ -181,6 +192,16 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
             if plan is not None:
                 plan.observe(tool_call["id"], result)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)})
+            halt_reason = result.get("halt_reason")
+            if halt_reason in ("cancelled", "user_denied", "policy_denied", "max_model_calls", "max_total_tokens", "usage_unavailable"):
+                if halt_reason == "max_model_calls":
+                    for pending, pending_name, _, _ in prepared_calls[index + 1:]:
+                        status = {"ok": False, "tool": pending_name, "source": "resume", "error": {
+                            "type": "NotExecuted", "message": "子任务耗尽共享预算，本轮后续工具未执行；需要时重新请求。"}}
+                        messages.append({"role": "tool", "tool_call_id": pending["id"], "content": json.dumps(status, ensure_ascii=False)})
+                    record_event(log_file, "budget_paused", reason=halt_reason, full_messages=messages)
+                print(f"子任务已要求停止（{halt_reason}），不执行后续工具或请求模型。")
+                return halt_reason
             if result.get("cleanup_succeeded") is False:
                 print("已停止：无法确认命令进程树已经清理；不执行后续工具或请求模型，请先核对现场。")
                 return "error"

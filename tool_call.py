@@ -19,6 +19,7 @@ from learn_agent.instructions import INSTRUCTION_MARKER, INSTRUCTION_POLICY, loa
 from learn_agent.planning import PLAN_INSTRUCTION, PLAN_SCHEMA
 from learn_agent.recovery import RECOVERY_LABELS, load_recovery
 from learn_agent.sessions import SessionStore
+from learn_agent.subagents import DELEGATE_INSTRUCTION, DELEGATE_SCHEMA, make_subagent_tool
 from learn_agent.tasks import STATE_LABELS, replay_events
 from learn_agent.tools import tool_schemas
 
@@ -59,6 +60,7 @@ def main() -> None:
     parser.add_argument("--mcp-demo", action="store_true", help="启动本项目的本地 MCP 示例服务并发现工具；外部调用逐次确认，预览不启动服务")
     parser.add_argument("--skill", metavar="DIR", help="显式加载 workspace 内目录的 SKILL.md 做事指南；不增加工具或授予权限")
     parser.add_argument("--plugin", metavar="DIR", help="显式加载 workspace 内的插件清单与源码；预览不执行，工具逐次确认后才执行插件代码")
+    parser.add_argument("--subagent", action="store_true", help="启用 delegate_readonly；确认后委派独立上下文的只读子任务，共用预算，不继承插件或执行工具")
     args = parser.parse_args()
     if args.semantic_compact and args.context_chars is None:
         parser.error("--semantic-compact 必须同时指定 --context-chars。")
@@ -68,9 +70,9 @@ def main() -> None:
         parser.error("查看状态、会话列表、检查或撤回时，不提供新任务或恢复参数。")
     if (args.resume or args.session or args.recover) and args.prompt is None:
         parser.error("使用 --resume、--session 或 --recover 时，请同时提供新的问题或任务。")
-    if (args.diff or args.undo or args.sessions or args.status) and (args.skill or args.plugin):
-        parser.error("查看记录或撤回时不加载 Skill 或插件。")
-    known_tools = {tool["function"]["name"] for tool in [*tool_schemas(), PLAN_SCHEMA]} | set(DEMO_TOOL_NAMES)
+    if (args.diff or args.undo or args.sessions or args.status) and (args.skill or args.plugin or args.subagent):
+        parser.error("查看记录或撤回时不加载 Skill、插件或子 Agent。")
+    known_tools = {tool["function"]["name"] for tool in [*tool_schemas(), PLAN_SCHEMA, DELEGATE_SCHEMA]} | set(DEMO_TOOL_NAMES)
     if not args.plugin and set(args.deny_tool) - known_tools:
         parser.error("--deny-tool 包含未知工具名。")
     try:
@@ -143,7 +145,7 @@ def review_changes(log_path: str, undo: bool = False) -> None:
 def run_cli(args: argparse.Namespace) -> None:
     skill = load_skill(args.skill) if args.skill is not None else None
     plugin = load_plugin(args.plugin) if args.plugin is not None else None
-    known_tools = {tool["function"]["name"] for tool in [*tool_schemas(), PLAN_SCHEMA]} | set(DEMO_TOOL_NAMES)
+    known_tools = {tool["function"]["name"] for tool in [*tool_schemas(), PLAN_SCHEMA, DELEGATE_SCHEMA]} | set(DEMO_TOOL_NAMES)
     if plugin is not None:
         known_tools.update(plugin.metadata["tools"])
     if set(args.deny_tool) - known_tools:
@@ -176,7 +178,7 @@ def run_connected_cli(args: argparse.Namespace, connection, skill=None, plugin=N
             {"role": "user", "content": args.prompt if args.prompt is not None else default_prompt},
         ],
         tools=[*tool_schemas(), *[tool.schema for tool in extra_tools],
-               *([PLAN_SCHEMA] if args.plan else [])], stream=args.stream,
+               *([PLAN_SCHEMA] if args.plan else []), *([DELEGATE_SCHEMA] if args.subagent else [])], stream=args.stream,
     )
     payload["messages"][0]["content"] = workspace_instruction + payload["messages"][0]["content"]
     if skill is not None:
@@ -208,6 +210,8 @@ def run_connected_cli(args: argparse.Namespace, connection, skill=None, plugin=N
         payload["messages"][0]["content"] += SKILL_POLICY
     if args.plan:
         payload["messages"][0]["content"] += PLAN_INSTRUCTION
+    if args.subagent:
+        payload["messages"][0]["content"] += DELEGATE_INSTRUCTION
     print(f"[第一次请求：消息与工具说明；工作目录：{root}]")
     preview_payload, context_report = select_context(payload, args.context_chars) if args.context_chars is not None else (payload, None)
     print(json.dumps(preview_payload, ensure_ascii=False, indent=2))
@@ -220,6 +224,8 @@ def run_connected_cli(args: argparse.Namespace, connection, skill=None, plugin=N
         extension_notices.append(f"[Skill] {skill['metadata']['name']}；来源 {skill['path']}；SHA256：{skill['sha256']}；本次显式加载。")
     if plugin is not None:
         extension_notices.append(f"[插件] {plugin.metadata['name']} {plugin.metadata['version']}；工具：{', '.join(plugin.metadata['tools'])}；仅确认后执行源码。")
+    if args.subagent:
+        extension_notices.append("[子 Agent] 委派逐次确认；独立上下文、只读、串行执行，与父任务共用预算。")
     if args.resume:
         print(f"\n[恢复会话] 从 {args.resume} 载入 {len(history)} 条历史消息。")
     elif args.session:
@@ -268,12 +274,16 @@ def run_connected_cli(args: argparse.Namespace, connection, skill=None, plugin=N
                 print(f"\n[本次会话] {session_id}")
                 print(f"[本次运行日志] {log_path}")
                 print(f"[本次修改检查点] {log_path.with_suffix('.checkpoint.json')}")
-                record_event(events, "run_start", session_id=session_id, provider=provider.name, mcp_server=connection.metadata if connection else None, skill_source={k: v for k, v in skill.items() if k != "instructions"} if skill is not None else None, plugin_source=plugin.metadata if plugin is not None else None, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, context_chars=args.context_chars, semantic_compact=args.semantic_compact, auto_read=args.auto_read, denied_tools=args.deny_tool, plan_enabled=args.plan, instructions_source={k: v for k, v in instructions.items() if k != "text"} if instructions is not None else None, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1, **({"initial_messages": payload["messages"]} if args.semantic_compact else {}))
+                record_event(events, "run_start", session_id=session_id, provider=provider.name, mcp_server=connection.metadata if connection else None, skill_source={k: v for k, v in skill.items() if k != "instructions"} if skill is not None else None, plugin_source=plugin.metadata if plugin is not None else None, subagent_enabled=args.subagent, workspace=str(root), checkpoint=str(log_path.with_suffix(".checkpoint.json")), max_model_calls=budget.max_model_calls, max_total_tokens=budget.max_total_tokens, context_chars=args.context_chars, semantic_compact=args.semantic_compact, auto_read=args.auto_read, denied_tools=args.deny_tool, plan_enabled=args.plan, instructions_source={k: v for k, v in instructions.items() if k != "text"} if instructions is not None else None, resumed_from=str(Path(args.resume).resolve()) if args.resume else None, recovered_from=str(Path(args.recover).resolve()) if args.recover else None, recovery_version=1, **({"initial_messages": payload["messages"]} if args.semantic_compact else {}))
                 reason = "error"
                 end_details = {}
                 try:
                     with checkpoints.track_changes(log_path):
-                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget, context_chars=args.context_chars, semantic_compact=args.semantic_compact, denied_tools=tuple(args.deny_tool), plan_enabled=args.plan, provider=provider, extra_tools=extra_tools)
+                        runtime_tools = (*extra_tools, *([make_subagent_tool(
+                            api_key=api_key, budget=budget, provider=provider, events=events, log_path=log_path,
+                            auto_read=args.auto_read, denied_tools=tuple(args.deny_tool), instructions=instructions,
+                            stream=args.stream, context_chars=args.context_chars)] if args.subagent else []))
+                        reason = loop.run_agent(payload, api_key, events, auto_read=args.auto_read, budget=budget, context_chars=args.context_chars, semantic_compact=args.semantic_compact, denied_tools=tuple(args.deny_tool), plan_enabled=args.plan, provider=provider, extra_tools=runtime_tools)
                 except (ValueError, OSError, EOFError, KeyboardInterrupt) as error:
                     reason = "cancelled" if isinstance(error, (KeyboardInterrupt, EOFError)) else "error"
                     end_details["error_type"] = type(error).__name__

@@ -57,7 +57,8 @@ class TaskStatus:
             if event == "tool_waiting":
                 self.state = "waiting_approval"
             elif event not in ("run_start", "model_request", "context_selected", "model_delta", "model_response", "tool_started", "tool_result",
-                               "compaction_start", "compaction_request", "compaction_response", "compaction_end", "budget_paused", "plan_updated"):
+                               "compaction_start", "compaction_request", "compaction_response", "compaction_end", "budget_paused", "plan_updated",
+                               "subagent_start", "subagent_end"):
                 raise ValueError(f"无法识别任务事件：{event}")
 
 
