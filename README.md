@@ -47,18 +47,22 @@
 - 支持 `--mcp-demo`：用官方 MCP Python SDK 经 stdio 连接独立的本地求和服务，发现工具并仅在本次运行中接入；外部工具逐次确认，支持明确禁用、参数检查、计划证据、日志和会话恢复。
 - 支持 `--skill DIR` 显式加载 `SKILL.md` 做事指南；`--plugin DIR` 加载带版本的本地 Python 工具插件。两者独立开关，不改核心循环；插件逐次确认，预览只读清单和源码，不执行插件代码。
 - 支持 `--subagent` 提供 `delegate_readonly`：确认后串行委派只读检查，子任务使用独立上下文和受限工具表，继承本次读取权限与禁用策略，与父任务共用模型次数和 token 预算；保存独立日志并返回报告、来源和用量。
+- 提供 `eval.py` 固定任务评测：逐题建立新项目，复用现有 CLI 和确认流程，按读取证据、修改范围与固定验收判定；保存包含失败的 JSON/Markdown 报告，支持重复运行和同题目版本的对照。
 
 模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
 
 第 39 课已真实验收：Skill 原文与插件工具说明进入请求，两次插件检查和验收/入口运行分别由 user 确认，静态结构与源码一致，四项测试通过、stdout 5050，最终按指南报告并 completed / stop。日志 run-20261020-165129-268468.jsonl 与 SQLite 相符，4 次请求累计 14917 token、用量完整，扩展来源哈希与实际文件一致；完整自动化测试累计 388 项通过。第 38 课按使用者要求暂缓，保留待验收状态。
 
-第 40 课已实现只读子 Agent，新增 20 项测试，完整累计 408 项通过。正常委派已真实核验：父子各 2 次模型请求、子任务只读取两份源码并定位上界错误、未运行或修改文件，来源与 SQLite 相符，累计 11074 token，父子均 completed / stop；真实取消验证待反馈。实现和验证范围见下面“委派只读子任务”。
+第 40 课已验收：正常委派与取消均已真实核验。正常父子各 2 次请求、累计 11074 token，父子 completed / stop；取消时各 1 次请求、累计 3923 token，在子读取确认处中断，没有读取执行或后续请求，父子 cancelled，委派结果与 SQLite 相符。
+
+第 41 课已实现三道固定任务的独立副本、固定验收、重复与对照报告；新增 19 项离线测试，完整累计 427 项通过，真实 DeepSeek 两组评测待反馈。
 
 ## 代码结构与工具注册
 
 ```text
 chat.py                 基础聊天命令行入口
 tool_call.py            Agent 命令行入口：参数、请求配置、日志文件和结果展示
+eval.py                 固定任务评测入口
 learn_agent/
   __init__.py           标记 Python 包
   model.py              call_model / get_api_key：HTTP 请求与本地密钥读取
@@ -72,6 +76,7 @@ learn_agent/
   instructions.py       显式项目规则读取、来源与版本标识、当前用户任务分隔
   extensions.py         本次 Skill 加载、插件清单检查、确认后执行与来源快照
   subagents.py          独立只读子任务、共享预算、来源报告与子任务日志
+  evaluation.py         任务副本、CLI 评测、固定判定、用量汇总与报告对照
   planning.py           本次任务步骤、证据引用与有效性检查、内部计划工具
   loop.py               run_agent：模型与工具之间的循环、批次校验和停止条件
   tools.py              内置工具实现、Tool / PreparedTool 和 TOOL_REGISTRY
@@ -83,6 +88,7 @@ learn_agent/
   tasks.py              TaskStatus、事件推导状态与只读回放
   recovery.py           取消、异常与 token 预算暂停检查、已有结果保留和未执行状态补全
 tests/                  使用临时目录和模拟模型响应的自动化测试
+evals/                  固定题目与评测器执行的验收脚本
 extensions/python-check/ 一个 Skill 与单文件 Python 插件的可运行示例
 workspace/              Agent 可以操作的练习目录
 ```
@@ -245,6 +251,57 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
 
+## 固定任务评测
+
+第 41 课用三道固定题目检验当前 Agent，成功标准在运行前确定：
+
+| 题目 | Agent 任务 | 通过条件 |
+| --- | --- | --- |
+| read_facts | 读取项目资料，按约定 JSON 返回项目名与实验编号 | 有真实读取证据，答案完全匹配，文件不变且没有执行操作 |
+| fix_sum | 修复求和上界，运行测试与入口 | 只改 main.py；Agent 实际运行对应测试与入口，评测器的四项固定验收通过 |
+| extend_stats | 为多文件项目补齐 min/max 与空列表处理 | 只改 src/stats.py；Agent 实际运行测试与入口，评测器的四项固定验收通过 |
+
+题目和初始源码保存在 evals/cases.json。每次、每题都建立新的 workspace 和新会话，避免上一轮修复或历史帮助下一轮。评测器启动原有 tool_call.py：读取自动允许，修改和运行仍需要输入 y；没有自动批准执行。题目要求的修改只发生在新副本，不改变原 workspace。
+
+评测器另外加载 evals/grade.py 的固定源码快照，在子进程中验证改后函数，不使用模型编写的验收条件；有意删改题目里的测试文件会判失败。验收进程不继承模型密钥，最长 10 秒，并检查退出码、超时、截断与验收完成标记。程序提前退出为 0 也不能跳过实际验收。这里没有操作系统沙箱，是普通项目功能评测，不是对抗恶意程序的安全证明。
+
+报告保存在 logs/evals/eval-时间-ID/report.json 和 report.md，均被现有 logs/ 忽略规则排除在 Git 之外。保留每题 workspace、Agent 日志路径、停止原因、各项判定、固定验收实际输出、耗时与 token 用量。模型说“完成”不计为通过；stop 只表示模型正常结束，仍可能被判定失败。失败任务同样进入成功率、耗时和用量统计；用量缺失保持未知，known_total_tokens 仅表示已知部分。complete 表示整组题目已尝试完成，不表示全部通过；取消或拒绝会停止后续题目并保留部分报告，不能把部分结果当成完整对照。
+
+先做请求上限为 1 的对照组，再做正常预算组。两组都会调用真实 DeepSeek API；上限为 1 的组最多发起 3 次请求，正常组每题最多 8 次。评测器还会对正常结束的两道编码题执行固定验收，无需另写任务或手动建立项目：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$agentPython = '.\.venv\Scripts\python.exe'
+& $agentPython -B -X utf8 eval.py --label limited-1 --max-model-calls 1
+$limitedReport = (Get-ChildItem -Path '.\logs\evals\eval-*\report.json' -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$limited = Get-Content -LiteralPath $limitedReport -Raw -Encoding UTF8 | ConvertFrom-Json
+$limited.summary | ConvertTo-Json -Depth 5
+```
+
+这组应为 0/3：即使最终文本碰巧正确，也没有完成读取证据或修改/运行/验收链路。模型提出工具请求时会因预算停止，通常不出现工具确认。不要把评测器保存报告理解成任务通过。
+
+```powershell
+& $agentPython -B -X utf8 eval.py --label normal-8 --max-model-calls 8 --compare $limitedReport
+$normalReport = (Get-ChildItem -Path '.\logs\evals\eval-*\report.json' -File |
+    Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+$normal = Get-Content -LiteralPath $normalReport -Raw -Encoding UTF8 | ConvertFrom-Json
+$normal.runs | Select-Object task_id, passed, reason, model_calls, agent_seconds | Format-Table -AutoSize
+$normal.summary | ConvertTo-Json -Depth 5
+$normal.comparison | ConvertTo-Json -Depth 5
+Get-Content -LiteralPath ([System.IO.Path]::ChangeExtension($normalReport, '.md')) -Encoding UTF8
+```
+
+正常组按提示确认修改和执行。它可能全部通过，也可能暴露失败；保留真实结果，不修改验收来凑成功率。失败时查看 runs 中的 checks、acceptance 与对应 Agent 日志：可区分请求上限、模型异常、修改范围、遗漏执行、计算错误或验收异常。统计输出的键顺序不同不算失败，按解析后的值核对。
+
+报告记录 model、git_head 与源码范围的 code_dirty。suite_hash 由固定题目、提示词、验收脚本与判定版本生成；--compare 要求题目版本和 --repeat 相同，不兼容时在调用模型前拒绝。对照列出成功率、平均 Agent 耗时和总 token 的差值；success_rate_delta 的 1.0 代表增加 100 个百分点。Agent 耗时包括人工确认等待，不能当成纯模型推理速度。固定验收本身不调用模型，不增加 token。
+
+默认每题一次，用于先理解流程。需要重复时两组都增加相同的 --repeat 2 或 --repeat 3；每次仍用新副本。三道小题与单次运行的结果只反映本组任务，不代表通用编程能力，也不能据此断言某种架构普遍更好。这一节比较预算配置；后续改动代码或提示词后，可以继续用同一题目版本与旧报告对照。
+
+新增 tests/test_evaluation.py 的 19 项测试，网络模拟、实际使用现有工具与固定验收子进程。覆盖三题通过、低预算失败保留、重复新副本/历史、两组报告对照、模型完成声明与伪造测试输出不替代验收、提前正常退出不能跳过验收、不同正确实现与字典输出顺序、测试文件改动/额外文件、真实读取证据、JSON 格式契约、未知与部分用量、拒绝/取消与部分报告、启动异常、不兼容报告提前拦截、超时/截断/清理失败不算通过，以及验收不继承模型密钥。真实两组 DeepSeek 评测待反馈。
+
+上述两组命令已在 Windows PowerShell 5.1 的独立临时目录离线验证，模型与确认输入模拟，实际复用 CLI 的文件工具、程序执行、SQLite 与固定验收：limited-1 为 0/3、300 token，正常组为 3/3、1000 token，两组均完成全部题目；成功率差值 1.0、token 差值 700，报告 JSON/Markdown、逐题 workspace 与日志均正确。正常组 6 次修改/执行确认均记录 source=user，没有绕过实际权限判定；仅模型网络与确认输入替换为模拟。原有练习、文章、图片与使用者日志保持不变。这些数字用于核验评测机制，不是当前真实模型的能力结论。
+
 ## 委派只读子任务
 
 第 40 课增加 `--subagent`，向主 Agent 提供 `delegate_readonly(task)`。主 Agent 把一项明确的阅读检查交出去，程序用同一个模型适配器启动一次新的 Agent 循环。子 Agent 只接收新系统说明、委派描述与本次显式项目规则，不复制父会话历史、Skill、插件、MCP 工具或计划。它与父 Agent 使用同一个 DeepSeek 模型、同一个 workspace 和同一个 Python 进程；独立的是消息上下文与工具表。
@@ -322,7 +379,9 @@ python -B -X utf8 tool_call.py --status $childLog
 
 上述正常与取消命令已在 Windows PowerShell 5.1 的独立临时项目离线验证：模拟模型回复和确认输入，真实读取两份文件、生成父子日志并保存 SQLite。正常流程共 4 次模型请求（父 2、子 2），两份读取来源、独立消息与受限工具表均正确，父子 completed / stop；子读取确认处模拟 Ctrl+C 后，父子均 cancelled，未执行读取或继续请求模型。示例项目文件保持原样，使用者原有练习文件、文章、图片与日志未改动。
 
-使用者随后已真实验证正常委派，会话 a956f68fc51f4622827fcd26dfe9718e、父日志 run-20261020-171858-553647.jsonl、子日志 run-20261020-171858-553647.child-60b9fb353752422b86dc8ca64e002152.jsonl。父 Agent 只调用一次 delegate_readonly，由 user 确认；子 Agent 首次请求仅有系统说明与委派描述两条消息，工具表只有 list_files/search_text/read_file，两次读取由 auto_read 允许。证据中的路径和文本哈希与子日志、当前源码一致；静态分析正确定位 main.py 第 2 行漏加上界，未调用写入或执行工具。父子均 completed / stop；父请求 2 次、子请求 2 次、摘要 0 次，输入 9349、输出 1725、总量 11074 token，用量完整。SQLite 只保存父会话的 4 条消息和 1 项委派记录，结果与父日志一致；子任务全部过程保留在独立日志。真实取消验证尚未反馈，第 40 课保留待完成状态。
+使用者随后已真实验证正常委派，会话 a956f68fc51f4622827fcd26dfe9718e、父日志 run-20261020-171858-553647.jsonl、子日志 run-20261020-171858-553647.child-60b9fb353752422b86dc8ca64e002152.jsonl。父 Agent 只调用一次 delegate_readonly，由 user 确认；子 Agent 首次请求仅有系统说明与委派描述两条消息，工具表只有 list_files/search_text/read_file，两次读取由 auto_read 允许。证据中的路径和文本哈希与子日志、当前源码一致；静态分析正确定位 main.py 第 2 行漏加上界，未调用写入或执行工具。父子均 completed / stop；父请求 2 次、子请求 2 次、摘要 0 次，输入 9349、输出 1725、总量 11074 token，用量完整。SQLite 只保存父会话的 4 条消息和 1 项委派记录，结果与父日志一致；子任务全部过程保留在独立日志。
+
+真实取消验证也已核验，会话 911a0485e62d48c491df97f847510afb、父日志 run-20261020-172447-294410.jsonl。委派 user 确认后，子任务在 read_file 的 tool_waiting 处收到 KeyboardInterrupt，未产生子读取 tool_started 或 tool_result；父子各 1 次模型请求后均 cancelled，没有后续请求。父委派结果 ok=false、halt_reason=cancelled、evidence=[]；SQLite 与日志一致，恢复检查为已有结果，不会重放子任务。累计 3923 token，用量完整。第 40 课已验收。
 
 ## 加载 Skill 与本地插件
 

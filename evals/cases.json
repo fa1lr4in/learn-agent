@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "read_facts",
+      "title": "读取项目资料",
+      "prompt": "读取 project.txt，提取项目名和实验编号。最终只输出一个 JSON 对象，字段为 project_name 和 experiment_id，两个值都使用字符串，不加 Markdown 围栏或其他文字。本次只读取，不创建、修改或运行文件。",
+      "editable": [],
+      "answer": {"project_name": "纸舟", "experiment_id": "8427"},
+      "files": {"project.txt": "项目名：纸舟\n实验编号：8427\n"}
+    },
+    {
+      "id": "fix_sum",
+      "title": "修复求和上界",
+      "prompt": "修复 main.py 的 sum_to(n)，使其计算从 1 到 n 的整数和，n=0 返回0。只修改 main.py，不改变 test_main.py，不创建其他文件。修复后实际运行 test_main.py 验收，并运行 main.py，简短报告真实结果。",
+      "editable": ["main.py"],
+      "test_file": "test_main.py",
+      "entry_stdout": "5050",
+      "files": {
+        "main.py": "def sum_to(n):\n    return sum(range(1, n))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n",
+        "test_main.py": "import unittest\nfrom main import sum_to\n\nclass SumTests(unittest.TestCase):\n    def test_zero(self): self.assertEqual(sum_to(0), 0)\n    def test_one(self): self.assertEqual(sum_to(1), 1)\n    def test_ten(self): self.assertEqual(sum_to(10), 55)\n    def test_hundred(self): self.assertEqual(sum_to(100), 5050)\n\nif __name__ == '__main__':\n    unittest.main()\n"
+      }
+    },
+    {
+      "id": "extend_stats",
+      "title": "补全多文件统计功能",
+      "prompt": "为 src/stats.py 的 summarize(values) 增加 min 和 max 字段，保留 count、total、average。空列表的 count/total 为0、average 为0.0、min/max 为None。只修改 src/stats.py，不改变 main.py 或 test_stats.py，不创建其他文件。实际运行 test_stats.py 验收，并运行 main.py，简短报告真实结果。",
+      "editable": ["src/stats.py"],
+      "test_file": "test_stats.py",
+      "entry_stdout": "{'count': 3, 'total': 30, 'average': 10.0, 'min': 5, 'max': 15}",
+      "files": {
+        "main.py": "from src.stats import summarize\n\nif __name__ == '__main__':\n    print(summarize([5, 10, 15]))\n",
+        "src/stats.py": "def summarize(values):\n    count = len(values)\n    total = sum(values)\n    return {'count': count, 'total': total, 'average': total / count}\n",
+        "test_stats.py": "import unittest\nfrom src.stats import summarize\n\nclass StatsTests(unittest.TestCase):\n    def test_regular(self): self.assertEqual(summarize([5, 10, 15]), {'count': 3, 'total': 30, 'average': 10.0, 'min': 5, 'max': 15})\n    def test_empty(self): self.assertEqual(summarize([]), {'count': 0, 'total': 0, 'average': 0.0, 'min': None, 'max': None})\n    def test_mixed(self): self.assertEqual(summarize([-3, 0, 9]), {'count': 3, 'total': 6, 'average': 2.0, 'min': -3, 'max': 9})\n    def test_single(self): self.assertEqual(summarize([7]), {'count': 1, 'total': 7, 'average': 7.0, 'min': 7, 'max': 7})\n\nif __name__ == '__main__':\n    unittest.main()\n"
+      }
+    }
+  ]
+}
