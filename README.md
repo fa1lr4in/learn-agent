@@ -62,7 +62,7 @@
 
 第七篇公众号正文与截图已由使用者处理完成：[从零开发 Agent（七）：接入扩展，用固定任务检验效果](<公众号文章/07-项目指令扩展与固定任务评测/从零开发 Agent（七）：接入扩展，用固定任务检验效果.md>)。已回到开发与教学，文章、图片和原始评测报告继续保留。
 
-第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后的客户端待使用者复查。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
+第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后使用者重新验证通过：从快照游标 85 续收到 319，290 条模型片段，4 次模型请求、11470 token；完成快照、结束后续收、两项用户审批、JSONL 与 SQLite 均一致，第 44 课已验收。末段 PowerShell 核验已修正跨脚本块变量作用域问题。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
 
 ## 前端交互示例
 
@@ -314,18 +314,56 @@ $apiResult.summary | ConvertTo-Json -Depth 5
 "model_delta 数量：$(@($apiResult.events | Where-Object { $_.event -eq 'model_delta' }).Count)"
 ```
 
-终端三接收完 task_finished 并退出后，在终端二核对最后游标；再重新打开观察客户端，验证完整快照包含结束状态。
+终端三接收完 task_finished 并退出后，可在该终端重新获取完成快照，再验证已到末尾的续收：
 
 ```powershell
-$sseCursorFile = Join-Path .\logs ('.watch-' + $apiTask.id + '.json')
-$sseCursor = Get-Content -LiteralPath $sseCursorFile -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($sseCursor.last_event_id -ne $apiResult.last_event_id) {
-    throw '观察客户端尚未接收最后一条事件，请在观察终端用 --resume 补收，不要重新提交任务。'
-} else {
-    Write-Host '观察客户端与任务快照的最后游标一致。'
+.\.venv\Scripts\python.exe -B -X utf8 watch_task.py $sseTaskId
+.\.venv\Scripts\python.exe -B -X utf8 watch_task.py $sseTaskId --resume
+```
+
+最后在终端二执行以下完整核验。所有变量都在同一个脚本块中创建和使用，并从本次任务的 JSONL 完成记录读取用量基准；不依赖前一步留下的变量。PowerShell 的 `& { ... }` 会创建子作用域，里面赋值的变量不会自动保留给下一段命令，不能直接跨块引用它们作为比较基准。这里读取日志中的完成记录与当前快照比较，也不会把刚取得的当前值冒充成观察之前的基准。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+
+& {
+    $ErrorActionPreference = 'Stop'
+    $sseIds = Get-Content -LiteralPath .\logs\.sse-task.json -Raw -Encoding UTF8 | ConvertFrom-Json
+    $apiInfo = Get-Content -LiteralPath .\logs\.api-server.json -Raw -Encoding UTF8 | ConvertFrom-Json
+    $apiHeaders = @{ Authorization = "Bearer $($apiInfo.token)" }
+    $apiCurrent = Invoke-RestMethod -Uri "$($apiInfo.url)/tasks/$($sseIds.id)" -Headers $apiHeaders
+    $apiLogEnd = Get-Content -LiteralPath $apiCurrent.log_path -Encoding UTF8 |
+        ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { $_.event -eq 'run_end' } | Select-Object -Last 1
+    $sseCursorFile = Join-Path .\logs ('.watch-' + $sseIds.id + '.json')
+    $sseCursor = Get-Content -LiteralPath $sseCursorFile -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    if (-not $apiCurrent.finished -or $apiCurrent.state -ne 'completed' -or
+        $apiCurrent.reason -ne 'stop' -or -not $apiCurrent.session_saved -or
+        -not [string]::IsNullOrEmpty($apiCurrent.persistence_error) -or
+        $null -eq $apiLogEnd -or $apiLogEnd.reason -ne 'stop') {
+        throw '任务完成状态、会话保存结果或日志结束记录不符合预期。'
+    }
+    if ($sseCursor.task_id -ne $sseIds.id -or $sseCursor.last_event_id -ne $apiCurrent.last_event_id) {
+        throw '观察客户端游标尚未到最后一条事件，请在终端三用 --resume 补收。'
+    }
+    if ($apiCurrent.summary.model_calls -ne $apiLogEnd.summary.model_calls) {
+        throw '当前模型请求次数与日志完成记录不一致。'
+    }
+    foreach ($usageField in @('prompt_tokens', 'completion_tokens', 'total_tokens')) {
+        if ($null -eq $apiLogEnd.summary.usage.$usageField -or
+            $apiCurrent.summary.usage.$usageField -ne $apiLogEnd.summary.usage.$usageField) {
+            throw "当前用量与日志完成记录不一致：$usageField"
+        }
+    }
+
+    $apiSaved = Invoke-RestMethod -Uri "$($apiInfo.url)/sessions/$($sseIds.session_id)" -Headers $apiHeaders
+    $apiSaved.messages | Select-Object -Last 1 | Format-List role, content
+    $apiSaved.tool_runs | Select-Object name, approved, approval_source | Format-Table -AutoSize
+    $apiCurrent | Select-Object state, reason, finished, session_saved, last_event_id | Format-List
+    $apiCurrent.summary | ConvertTo-Json -Depth 5
+    Write-Host '核验通过：最后游标一致，当前模型次数和逐项用量与任务完成日志一致，会话已保存。'
 }
-.\.venv\Scripts\python.exe -B -X utf8 watch_task.py $apiTask.id
-.\.venv\Scripts\python.exe -B -X utf8 tool_call.py --status $apiResult.log_path
 ```
 
 验收目标：主动断开时任务仍等待确认；续收序号继续递增，两次操作仍分别确认；真实测试与入口结果和上一课一致；model_delta 数量大于 0；task_finished、快照、JSONL 的 completed / stop 一致，session_saved=true，最后游标一致。观察、重新获取快照和补收不计入模型次数，不把事件数量当成模型调用次数。
