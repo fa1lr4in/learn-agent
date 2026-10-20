@@ -3,63 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="api-token" content="">
+  <meta name="workspace" content="">
   <title>learn-agent · 工作台</title>
-  <script src="./theme.js"></script>
-  <link rel="stylesheet" href="./styles.css">
-  <script type="module" src="./app.js"></script>
+  <script src="/assets/theme.js"></script>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="项目与会话">
-      <div class="brand">learn-agent<span class="demo-badge">本地示例</span></div>
-      <button id="new-task" class="new-task" type="button"><span aria-hidden="true">＋</span> 新建示例</button>
-      <p class="section-label">当前会话</p>
-      <div class="session"><span class="session-dot" aria-hidden="true"></span>验证整数求和函数</div>
-      <div class="project">
-        <p class="section-label">示例项目</p>
-        <p class="project-name">sum_demo</p>
-        <div class="file">main.py <span>入口与求和函数</span></div>
-        <div class="file">test_main.py <span>4 项验收测试</span></div>
-      </div>
-      <div class="sidebar-note">前端交互预览</div>
+      <div class="brand">learn-agent<span class="demo-badge">本地</span></div>
+      <button id="new-task" class="new-task" type="button"><span aria-hidden="true">＋</span> 新建会话</button>
+      <p class="section-label">历史会话</p>
+      <nav id="sessions" class="sessions" aria-label="历史会话"></nav>
+      <div class="project"><p class="section-label">当前项目</p><p id="project-path" class="project-name"></p></div>
+      <div id="connection" class="sidebar-note" role="status">正在连接本地服务</div>
     </aside>
-
     <main class="workspace">
       <header class="topbar">
-        <div><h1>sum_demo</h1></div>
+        <h1 id="project-title">工作台</h1>
         <div class="topbar-actions">
-          <span id="task-status" class="task-status" role="status">就绪</span>
+          <span id="task-status" class="task-status" role="status">连接中</span>
           <label class="sr-only" for="theme">外观主题</label>
-          <select id="theme" class="theme-select">
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-          <button id="reset-task" class="button secondary" type="button">重置示例</button>
+          <select id="theme" class="theme-select"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select>
+          <button id="reconnect" class="button secondary" type="button" hidden>重新连接</button>
+          <button id="new-chat" class="button secondary" type="button">新建会话</button>
         </div>
       </header>
-
       <section id="timeline" class="timeline" aria-label="任务对话">
-        <div id="welcome" class="welcome">
-          <h2>今天想做点什么？</h2>
-          <p>从核对源码与测试开始。</p>
-        </div>
+        <div id="welcome" class="welcome"><h2>今天想做点什么？</h2><p>描述任务，从当前项目开始。</p></div>
         <div id="messages" class="messages" role="log" aria-label="消息与工具过程" aria-live="polite"></div>
       </section>
-
       <div class="interaction-area">
         <section id="approval" class="approval" aria-labelledby="approval-title" hidden>
-          <div class="approval-heading"><div><h2 id="approval-title">允许这次运行吗？</h2><p id="approval-tool"></p></div><span class="approval-badge">等待确认</span></div>
+          <div class="approval-heading"><div><h2 id="approval-title">允许这次操作吗？</h2><p id="approval-tool"></p></div><span class="approval-badge">等待确认</span></div>
           <pre id="approval-command"></pre>
-          <div class="approval-bottom"><p>本次只模拟此操作，不会运行本地命令。</p><div class="approval-actions"><button id="deny" class="button secondary" type="button">拒绝</button><button id="allow" class="button primary" type="button">允许本次运行</button></div></div>
+          <div class="approval-bottom"><p>请检查操作内容；修改和运行分别确认。</p><div class="approval-actions"><button id="deny" class="button secondary" type="button">拒绝</button><button id="allow" class="button primary" type="button">允许本次操作</button></div></div>
         </section>
-        <p id="notice" class="notice" role="status">输入会显示为用户消息，后续按固定示例流程演示。</p>
+        <p id="notice" class="notice" role="status">正在连接本地服务……</p>
         <form id="composer" class="composer">
           <label class="sr-only" for="prompt">任务内容</label>
-          <textarea id="prompt" rows="2" maxlength="2000" placeholder="描述想交给 Agent 的任务……"></textarea>
-          <div class="composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span><div class="composer-actions"><button id="stop" class="button secondary" type="button" hidden>停止</button><button id="send" class="button primary" type="submit">发送任务 <span aria-hidden="true">↑</span></button></div></div>
+          <textarea id="prompt" rows="2" maxlength="10000" placeholder="描述想交给 Agent 的任务……"></textarea>
+          <div class="composer-bottom"><label class="read-policy"><input id="auto-read" type="checkbox" checked> 自动允许读取</label><div class="composer-actions"><button id="stop" class="button secondary" type="button" hidden>停止</button><button id="send" class="button primary" type="submit">发送任务 <span aria-hidden="true">↑</span></button></div></div>
         </form>
-        <p class="footnote">示例模式不连接模型，不读取、修改或执行本地项目。</p>
+        <p id="usage" class="footnote">Enter 发送 · Shift + Enter 换行</p>
       </div>
     </main>
   </div>

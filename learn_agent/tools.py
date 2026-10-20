@@ -173,6 +173,7 @@ def run_python(path: str) -> subprocess.CompletedProcess[str]:
 class PreparedTool:
     action: str
     execute: Callable[[], dict]
+    preview: str | None = None
 
 
 @dataclass(frozen=True)
@@ -262,7 +263,7 @@ def _prepare_edit(arguments: dict) -> PreparedTool:
         apply_edit(path, original, updated)
         return {"path": path, "replacements": 1, "diff": diff}
 
-    return PreparedTool(f"按差异编辑 {path}", execute)
+    return PreparedTool(f"按差异编辑 {path}", execute, preview=diff)
 
 
 def _prepare_run(arguments: dict) -> PreparedTool:

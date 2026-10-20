@@ -180,7 +180,8 @@ def run_agent(payload: dict, api_key: str, log_file: TextIO | EventRecorder | No
                 prepared = None if decision == "deny" else tool.prepare(arguments)
                 if decision == "ask":
                     record_event(log_file, "tool_waiting", step=step, tool=name, tool_call_id=tool_call["id"],
-                                 action=prepared.action, arguments=arguments)
+                                 action=prepared.action, arguments=arguments,
+                                 **({"preview": prepared.preview} if prepared.preview is not None else {}))
                 if decision == "ask" and request_approval is not None:
                     approved, source = request_approval(tool_call["id"], name, arguments, prepared.action), "user"
                 else:

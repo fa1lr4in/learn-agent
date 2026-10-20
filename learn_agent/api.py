@@ -2,11 +2,13 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from secrets import compare_digest
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -65,6 +67,8 @@ def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
             return JSONResponse({"detail": "拒绝来自其他网页的请求。"}, status_code=403)
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         if response.headers.get("Content-Type") == "application/json":
             response.headers["Content-Type"] = "application/json; charset=utf-8"
         return response
@@ -78,6 +82,18 @@ def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
     @app.get("/health")
     def health():
         return {"status": "ok", "api_version": 1}
+
+    web_dir = Path(__file__).resolve().parent.parent / "web"
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def workbench():
+        page = (web_dir / "index.html").read_text(encoding="utf-8")
+        # The same-origin page receives only this process's local access token, never the model key.
+        page = page.replace('name="api-token" content=""', f'name="api-token" content="{escape(token, quote=True)}"')
+        page = page.replace('name="workspace" content=""', f'name="workspace" content="{escape(str(manager.workspace), quote=True)}"')
+        return HTMLResponse(page, headers={"Content-Security-Policy": "default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"})
+
+    app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
 
     protected = [Depends(authorize)]
 
@@ -100,6 +116,10 @@ def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
     @app.get("/tasks/{task_id}", dependencies=protected)
     def read_task(task_id: str):
         return manager.snapshot(task_id)
+
+    @app.get("/tasks", dependencies=protected)
+    def list_tasks():
+        return manager.list_tasks()
 
     def event_subscription(task_id: str, after: str | None = None,
                            last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):

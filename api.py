@@ -39,6 +39,7 @@ def main() -> None:
         info_path.write_text(json.dumps({"url": "http://127.0.0.1:8000", "token": token,
                                          "workspace": str(args.workspace.resolve()), "pid": os.getpid()},
                                         ensure_ascii=False), encoding="utf-8")
+        print("本地工作台：http://127.0.0.1:8000/", flush=True)
         print("本地 API：http://127.0.0.1:8000/docs", flush=True)
         print(f"本地访问令牌保存在 {info_path}；仅供本机客户端使用，每次重启更换。", flush=True)
         print("终端保留运行，Ctrl+C 关闭；正在执行的操作会在返回后响应取消。", flush=True)

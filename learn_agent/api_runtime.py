@@ -134,6 +134,11 @@ class TaskManager:
         with self.condition:
             return self._task(task_id).snapshot()
 
+    def list_tasks(self) -> list[dict]:
+        with self.condition:
+            return [{"id": task.id, "session_id": task.session_id, "finished": task.finished}
+                    for task in self.tasks.values()]
+
     def open_events(self, task_id: str, cursor: str | None) -> tuple[str, int, dict | None]:
         """Read a snapshot and its cursor under the same lock, before HTTP streaming starts."""
         with self.condition:
@@ -192,6 +197,10 @@ class TaskManager:
             task.approval_answer = None
             task.pending_approval = {"id": uuid4().hex, "tool_call_id": call_id,
                                      "tool": name, "arguments": deepcopy(arguments), "action": action}
+            waiting = next((e for e in reversed(task.events)
+                            if e["event"] == "tool_waiting" and e.get("tool_call_id") == call_id), {})
+            if "preview" in waiting:
+                task.pending_approval["preview"] = waiting["preview"]
             self._publish(task, "approval_required", task.pending_approval)
             self.condition.wait_for(lambda: task.approval_answer is not None or task.cancel_requested.is_set())
             task.pending_approval = None
