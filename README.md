@@ -49,6 +49,7 @@
 - 支持 `--subagent` 提供 `delegate_readonly`：确认后串行委派只读检查，子任务使用独立上下文和受限工具表，继承本次读取权限与禁用策略，与父任务共用模型次数和 token 预算；保存独立日志并返回报告、来源和用量。
 - 提供 `eval.py` 固定任务评测：逐题建立新项目，复用现有 CLI 和确认流程，按读取证据、修改范围与固定验收判定；保存包含失败的 JSON/Markdown 报告，支持重复运行和同题目版本的对照。
 - 提供 `web/` 完整任务界面：真实发送任务、流式消息、工具卡片、编辑前差异、逐项审批、拒绝、停止、会话历史与继续提问；支持跟随系统、浅色、深色主题。由本地后端同时提供页面和 API，无需额外前端服务。
+- 已保存的网页会话按真实结束原因显示状态，并使用保存的审批记录区分已拒绝、未执行和结果未确认；刷新与重连只观察原任务，不重新提交或执行历史工具。
 - 提供 FastAPI 本地后端：创建和读取会话、提交任务、查询快照、逐项审批和申请取消，复用现有 Agent 循环、权限、检查点、预算、JSONL 与 SQLite。只监听本机，工作目录在启动时固定，一次运行一个任务；模型密钥只在后端读取。
 - 支持任务 SSE 事件推送：快照与任务专属游标、按 Last-Event-ID 补收、审批就绪和保存完成通知；断开观察连接不取消任务。可选 stream=true 接收模型文本片段，提供 watch_task.py 验证实时观察与断线续收。
 
@@ -109,7 +110,125 @@ Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-age
 
 4. 点侧栏已完成会话，确认用户消息、工具结果和回答仍在；在正常完成的会话继续问“根据刚才已经得到的结果，入口打印的 total 和 average 分别是多少？不要调用工具。”。同一后端运行期间也可在等待运行审批时刷新页面，检查原操作仍待确认，刷新不会执行它。浏览器主题切换和刷新保留继续有效。
 
-本课新增 8 项 Python 测试和 22 项前端测试：完整 Python 累计 478 项通过，前端 22 项测试全部通过。浏览器已用临时项目与固定模型回复实际验证修改前差异、分别确认编辑/执行、拒绝后文件不变、等待审批时停止、刷新恢复审批、读取历史与继续提问，以及暗黑模式；真实文件输出为 5051。上述离线检查不替代使用者的 DeepSeek 联合验收，当前待反馈。本次不写文章，第八篇仍等网页阶段形成明显里程碑后单独安排。
+本课新增 8 项 Python 测试和 22 项前端测试：完整 Python 累计 478 项通过，前端 22 项测试全部通过。浏览器已用临时项目与固定模型回复实际验证修改前差异、分别确认编辑/执行、拒绝后文件不变、等待审批时停止、刷新恢复审批、读取历史与继续提问，以及暗黑模式；真实文件输出为 5051。使用者随后完成真实 DeepSeek 联合验收：编辑、测试与入口分别确认，四项测试通过，入口 total=36、average=12.0；拒绝、停止和历史续聊正常，最终 completed / stop，会话已保存。五次真实任务的 API、JSONL、SQLite 和累计用量已核对：依次为 3/2/4/1/1 次请求、8729/5018/11166/2372/3441 token。第 45 课已验收。
+
+## 网页端整体验收
+
+第 46 课检查网页在完整使用过程中的一致性：刷新不会执行工具，断开观察不会创建新任务，旧审批不会授权下一项操作，后端重启后已保存的历史仍能正确显示。这次不增加新的 Agent 工具。
+
+本次修正 `web/view-model.js` 和 `web/app.js`：历史工具卡结合 SQLite 的审批记录还原状态，明确保留拒绝；相同调用 ID 按保存顺序匹配，避免不同轮的工具串在一起。历史顶部状态按结束原因恢复，正常完成显示已完成，拒绝和停止显示已取消，预算超限显示已暂停。只有批准但没有结果的操作显示结果未确认，不冒充成功。
+
+新增 3 项 Python 联合检查和 4 项前端回归测试：完整 Python 481 项、前端 26 项均通过。浏览器使用独立临时项目和固定模型回复完成以下离线验收，文件编辑、Python 测试、入口运行与 SQLite 保存均为真实操作：
+
+- 模拟提交已被后端接收但响应正文丢失，网页找回同一任务，POST 只提交一次。
+- 等待编辑与测试审批时分别刷新，任务、审批和已有结果不变；事件连接返回 503 后禁用审批，恢复连接后仍待原项确认。
+- 分别批准编辑、测试和入口运行，四项测试通过，入口输出 total=42、average=14.0，5 次固定回复、60 token，最终 completed / stop、会话已保存。
+- 拒绝编辑后文件不变；停止等待中的运行后没有工具执行；重新打开两类历史，分别保留已拒绝和未执行。
+- 在临时服务中重启后端并更换令牌：任务索引为空，旧令牌返回 401，已保存的会话仍在；读取历史没有新增模型请求。正常历史续聊只新增本次回答，没有重放工具。
+
+这些结果验证前后端行为，不代表本课已经完成真实 DeepSeek 联合验收。以下按当前 demo_project（values 为 [6, 12, 18]）复验。不要重新运行上一节的 [5, 10, 15] 修改任务。
+
+**1. 启动服务。** 已启动时先在原后端终端 Ctrl+C，等待退出，再执行并保持终端运行：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+.\.venv\Scripts\python.exe -B -X utf8 api.py --workspace .\workspace\demo_project
+```
+
+打开 http://127.0.0.1:8000/，刷新页面加载当前代码与令牌。新建会话，勾选自动允许读取，发送：
+
+> 网页验收46：读取 main.py，只用 edit_file 将 values = [6, 12, 18] 改为 values = [7, 14, 21]。修改成功后，用 run_command 运行 python -m unittest -v test_stats.py，再用 run_python 运行 main.py。不要修改其他文件，简要报告真实结果。
+
+**2. 在编辑审批处暂停，记录基准。** 不要先点允许。在第二个终端执行：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$api = Get-Content -LiteralPath .\logs\.api-server.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$headers = @{ Authorization = "Bearer $($api.token)" }
+$tasks = Invoke-RestMethod -Uri "$($api.url)/tasks" -Headers $headers
+$running = @($tasks | Where-Object { -not $_.finished })
+if ($running.Count -ne 1) { throw '应有一个正在等待审批的任务。' }
+$task = Invoke-RestMethod -Uri "$($api.url)/tasks/$($running[0].id)" -Headers $headers
+if ($task.pending_approval.tool -ne 'edit_file') { throw '请先停在编辑审批处。' }
+@{
+    id = $task.id; session_id = $task.session_id
+    approval_id = $task.pending_approval.id; cursor = $task.last_event_id
+    event_count = @($task.events).Count
+    source_hash = (Get-FileHash -LiteralPath (Join-Path $api.workspace 'main.py') -Algorithm SHA256).Hash
+} | ConvertTo-Json | Set-Content -LiteralPath .\logs\.web-acceptance-46.json -Encoding UTF8
+'已保存本次任务和审批基准。'
+```
+
+刷新网页，或关闭该网页后重新打开相同地址。编辑仍须确认，代码差异仍为 [6, 12, 18] → [7, 14, 21]。执行下面的只读核验，确认观察没有推进任务或修改文件：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$api = Get-Content -LiteralPath .\logs\.api-server.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$baseline = Get-Content -LiteralPath .\logs\.web-acceptance-46.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$task = Invoke-RestMethod -Uri "$($api.url)/tasks/$($baseline.id)" -Headers @{ Authorization = "Bearer $($api.token)" }
+$hash = (Get-FileHash -LiteralPath (Join-Path $api.workspace 'main.py') -Algorithm SHA256).Hash
+if ($task.pending_approval.id -ne $baseline.approval_id -or
+    $task.last_event_id -ne $baseline.cursor -or @($task.events).Count -ne $baseline.event_count -or
+    $hash -ne $baseline.source_hash) { throw '任务已发生变化，请检查是否已经操作审批。' }
+'任务、审批、事件与源码均未变化；刷新没有调用模型或执行工具。'
+```
+
+**3. 完成真实任务，再核对文件、日志和会话。** 允许编辑后，测试仍需确认；可以在测试审批处再刷新，编辑卡应为完成，测试仍未执行。分别批准测试和入口运行，等到显示会话已保存。应有四项测试通过，入口 total=42、average=14.0、min=7、max=21。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$api = Get-Content -LiteralPath .\logs\.api-server.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$headers = @{ Authorization = "Bearer $($api.token)" }
+$baseline = Get-Content -LiteralPath .\logs\.web-acceptance-46.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$task = Invoke-RestMethod -Uri "$($api.url)/tasks/$($baseline.id)" -Headers $headers
+if (-not $task.finished -or $task.state -ne 'completed' -or $task.reason -ne 'stop' -or
+    -not $task.session_saved -or $task.persistence_error) { throw '任务尚未正常完成并保存。' }
+$events = @(Get-Content -LiteralPath $task.log_path -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json })
+$end = $events | Where-Object { $_.event -eq 'run_end' } | Select-Object -Last 1
+$responses = @($events | Where-Object { $_.event -eq 'model_response' })
+$inputTokens = 0L; $outputTokens = 0L; $totalTokens = 0L
+foreach ($response in $responses) {
+    $usage = $response.response.usage
+    if ($null -eq $usage.prompt_tokens -or $null -eq $usage.completion_tokens -or $null -eq $usage.total_tokens) { throw '模型用量不完整。' }
+    $inputTokens += [long]$usage.prompt_tokens
+    $outputTokens += [long]$usage.completion_tokens
+    $totalTokens += [long]$usage.total_tokens
+}
+foreach ($summary in @($task.summary, $end.summary)) {
+    if ($summary.model_calls -ne $responses.Count -or $summary.usage.prompt_tokens -ne $inputTokens -or
+        $summary.usage.completion_tokens -ne $outputTokens -or $summary.usage.total_tokens -ne $totalTokens) { throw '累计用量不一致。' }
+}
+if ($end.reason -ne 'stop' -or $end.task_state -ne 'completed') { throw '日志结束状态不一致。' }
+$results = @($events | Where-Object { $_.event -eq 'tool_result' })
+$test = $results | Where-Object { $_.tool -eq 'run_command' } | Select-Object -Last 1
+$entry = $results | Where-Object { $_.tool -eq 'run_python' } | Select-Object -Last 1
+if (-not $test.result.ok -or $test.result.exit_code -ne 0 -or $test.result.stderr -notmatch 'Ran 4 tests' -or
+    $test.result.stderr -notmatch '(?m)^OK\s*$' -or -not $entry.result.ok -or $entry.result.exit_code -ne 0 -or
+    $entry.result.stdout -notmatch "'total': 42" -or $entry.result.stdout -notmatch "'average': 14\.0") { throw '测试或入口结果未通过。' }
+$session = Invoke-RestMethod -Uri "$($api.url)/sessions/$($baseline.session_id)" -Headers $headers
+$saved = @($session.tool_runs | Where-Object { $_.run_log -eq $task.log_path -and $null -ne $_.result })
+if ($saved.Count -ne $results.Count) { throw 'SQLite 工具结果数不一致。' }
+foreach ($result in $results) {
+    $record = @($saved | Where-Object { $_.step -eq $result.step -and $_.call_id -eq $result.tool_call_id })
+    if ($record.Count -ne 1 -or
+        ($record[0].result | ConvertTo-Json -Depth 20 -Compress) -ne ($result.result | ConvertTo-Json -Depth 20 -Compress)) { throw 'SQLite 与日志工具结果不一致。' }
+}
+$stamp = @{ cursor = $task.last_event_id; log_hash = (Get-FileHash -LiteralPath $task.log_path -Algorithm SHA256).Hash }
+if ($baseline.completed -and ($baseline.completed.cursor -ne $stamp.cursor -or $baseline.completed.log_hash -ne $stamp.log_hash)) { throw '已完成任务出现新事件或日志变化。' }
+$baseline | Add-Member -NotePropertyName completed -NotePropertyValue $stamp -Force
+$baseline | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath .\logs\.web-acceptance-46.json -Encoding UTF8
+$results | Select-Object tool, @{ Name = 'ok'; Expression = { $_.result.ok } }, @{ Name = 'exit_code'; Expression = { $_.result.exit_code } } | Format-Table -AutoSize
+$task.summary | ConvertTo-Json -Depth 5
+'真实结果、逐轮用量、JSONL 和 SQLite 核对通过。'
+```
+
+刷新网页、点击该已完成历史，再执行上面同一个核验块。游标和日志哈希应不变，模型次数和用量不变。请求次数由模型实际路径决定，不要求恰好等于离线验收的 5 次。以上基准文件和原始日志都位于已忽略的 logs/，不上传 GitHub。
+
+**4. 检查拒绝、停止与重启。** 新建会话，请求“只用 edit_file 将 main.py 中 [7, 14, 21] 改为 [99, 99, 99]”；拒绝编辑，再点该历史，编辑卡必须仍为已拒绝，文件不变。新建会话请求“只用 run_python 运行 main.py，不修改文件”；在审批处点停止，重新打开该历史，运行卡必须为未执行，不出现这次的 stdout。
+
+所有任务结束并保存后，可在后端终端 Ctrl+C 并用第 1 步命令重新启动，再刷新网页。旧进程的任务索引不会恢复，已有 SQLite 历史仍能读取。选择本次正常完成的历史，问“根据已有结果，入口 total 和 average 分别是多少？不要调用工具。”，应回答 42 和 14.0，没有工具重放。后端进程退出时未完成的内存任务不支持自动恢复，这与同一进程内刷新或恢复事件连接不同。
+
+第 46 课待使用者完成上述真实模型整体验收。第八篇公众号在本阶段验收后另开一次会话处理，本次不改文章、不开始桌面打包。
 
 ## 本地后端 API
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient, parseEvents, sequence } from "../web/client.js";
-import { historyItems, taskItems } from "../web/view-model.js";
+import { historyItems, sessionPhase, taskItems } from "../web/view-model.js";
 
 const frame = (n, event = "note", data = {}, task = "task") => ({ id: `${task}:${n}`, event, data, task_id: task });
 const wire = f => `id: ${f.id}\r\nevent: ${f.event}\r\ndata: ${JSON.stringify(f)}\r\n\r\n`;
@@ -120,6 +120,39 @@ test("reused tool IDs in different model steps remain independent", () => {
 test("history uses actual tool result messages and handles repeated call IDs", () => {
   const messages = [1, 2].flatMap(n => [{ role: "assistant", tool_calls: [call()] }, { role: "tool", tool_call_id: "call", content: JSON.stringify({ ok: true, stdout: String(n) }) }]);
   assert.deepEqual(historyItems(messages).map(i => i.result.stdout), ["1", "2"]);
+});
+
+test("saved approvals preserve denial and cancellation without inventing results", () => {
+  const messages = ["denied", "cancelled", "approved"].map(id => ({ role: "assistant", tool_calls: [call(id)] }));
+  const runs = [{ call_id: "denied", approved: false, approval_source: "user", result: null },
+    { call_id: "cancelled", approved: null, result: null }, { call_id: "approved", approved: true, result: null }];
+  const items = historyItems(messages, runs);
+  assert.deepEqual(items.map(i => i.status), ["denied", "cancelled", "unknown"]);
+  assert.equal(items[0].approvalSource, "user");
+  assert.ok(items.every(i => !i.result));
+});
+
+test("saved tool records with reused IDs attach in transcript order", () => {
+  const messages = [{ role: "assistant", tool_calls: [call()] }, { role: "tool", tool_call_id: "call", content: '{"ok":true,"stdout":"5050"}' },
+    { role: "assistant", tool_calls: [call()] }, { role: "tool", tool_call_id: "call", content: '{"ok":false,"error":{"type":"NotExecuted"}}' }];
+  const runs = [{ call_id: "call", approved: true, approval_source: "user", result: { ok: true, stdout: "5050" } },
+    { call_id: "call", approved: false, approval_source: "user", result: null }];
+  const items = historyItems(messages, runs);
+  assert.deepEqual(items.map(i => i.status), ["completed", "denied"]);
+  assert.equal(items[0].result.stdout, "5050");
+  assert.equal(items[1].result.error.type, "NotExecuted");
+});
+
+test("archived tool requests without execution evidence are not queued for replay", () => {
+  assert.equal(historyItems([{ role: "assistant", tool_calls: [call()] }])[0].status, "cancelled");
+});
+
+test("archived task phase reflects the saved end reason", () => {
+  assert.equal(sessionPhase(null), "idle");
+  assert.equal(sessionPhase("stop"), "completed");
+  for (const reason of ["cancelled", "user_denied", "policy_denied"]) assert.equal(sessionPhase(reason), "cancelled");
+  for (const reason of ["max_model_calls", "max_total_tokens", "usage_unavailable", "context_limit", "plan_incomplete"]) assert.equal(sessionPhase(reason), "paused");
+  for (const reason of ["error", "abnormal_finish"]) assert.equal(sessionPhase(reason), "failed");
 });
 test("untrusted model and file content stay plain data", () => {
   const content = '<img src=x onerror="alert(1)">';

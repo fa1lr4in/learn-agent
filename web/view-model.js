@@ -1,6 +1,14 @@
 export const PHASES = { idle: "就绪", running: "进行中", waiting_approval: "等待确认", completed: "已完成", cancelled: "已取消", failed: "失败", paused: "已暂停" };
 export const TOOL_STATES = { queued: "尚未执行", waiting_approval: "等待确认", running: "进行中", completed: "完成", failed: "失败", denied: "已拒绝", cancelled: "未执行", unknown: "结果未确认" };
 
+export function sessionPhase(reason) {
+  if (!reason) return "idle";
+  if (reason === "stop") return "completed";
+  if (["user_denied", "policy_denied", "cancelled"].includes(reason)) return "cancelled";
+  if (["max_model_calls", "max_total_tokens", "usage_unavailable", "context_limit", "plan_incomplete"].includes(reason)) return "paused";
+  return "failed";
+}
+
 function argumentsOf(call) {
   const raw = call.function?.arguments;
   try {
@@ -9,19 +17,26 @@ function argumentsOf(call) {
   } catch { return { raw }; }
 }
 
-export function historyItems(messages = []) {
-  const items = [], calls = new Map();
+export function historyItems(messages = [], toolRuns = []) {
+  const items = [], calls = new Map(), records = new Map();
+  // 同一会话的多次任务可能重用调用 ID，按保存顺序逐项匹配。
+  for (const run of toolRuns) {
+    if (!records.has(run.call_id)) records.set(run.call_id, []);
+    records.get(run.call_id).push(run);
+  }
   for (const [index, message] of messages.entries()) {
     if (["user", "assistant"].includes(message.role) && message.content) items.push({ type: "message", role: message.role, content: message.content });
     for (const call of message.tool_calls || []) {
-      const item = { type: "tool", id: `history-${index}-${call.id}`, name: call.function?.name || "无效工具请求", arguments: argumentsOf(call), status: "queued" };
+      const run = records.get(call.id)?.shift();
+      const item = { type: "tool", id: `history-${index}-${call.id}`, name: call.function?.name || "无效工具请求", arguments: argumentsOf(call), status: run?.approved === false ? "denied" : run?.approved === true ? "unknown" : "cancelled" };
+      if (run?.approval_source) item.approvalSource = run.approval_source;
       calls.set(call.id, item);
       items.push(item);
     }
     if (message.role === "tool" && calls.has(message.tool_call_id)) {
       const item = calls.get(message.tool_call_id);
       try { item.result = JSON.parse(message.content); } catch { item.result = { content: message.content }; }
-      item.status = item.result.error?.type === "NotExecuted" ? "cancelled" : item.result.ok === false ? "failed" : "completed";
+      if (item.status !== "denied") item.status = item.result.error?.type === "NotExecuted" ? "cancelled" : item.result.ok === false ? "failed" : "completed";
     }
   }
   return items;

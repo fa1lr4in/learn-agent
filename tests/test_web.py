@@ -118,6 +118,62 @@ class WebWorkbenchTests(unittest.TestCase):
         self.assertFalse(result['ok'])
         self.assertEqual(self.source.read_text(), 'print(6000)\n')
 
+    def test_duplicate_submission_while_waiting_does_not_create_or_run_another_task(self):
+        task = self.edit_task()
+        for session in [task['session_id'], self.client.post('/sessions').json()['id']]:
+            response = self.client.post(f'/sessions/{session}/tasks', json={'prompt': '重复提交。'})
+            self.assertEqual(response.status_code, 409)
+        self.assertEqual(len(self.client.get('/tasks').json()), 1)
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertEqual(self.source.read_text(), 'print(5050)\n')
+        self.client.post(f'/tasks/{task["id"]}/cancel')
+        self.app.state.manager.tasks[task['id']].thread.join(5)
+
+    def test_old_approval_cannot_authorize_next_tool_and_observation_does_not_replay(self):
+        task = self.edit_task()
+        self.provider.replies = [reply(call('run_python', {'path': 'main.py'})), reply()]
+        old = {'approval_id': task['pending_approval']['id'], 'approved': True}
+        self.assertEqual(self.client.post(f'/tasks/{task["id"]}/approvals', json=old).status_code, 202)
+        with self.app.state.manager.condition:
+            self.assertTrue(self.app.state.manager.condition.wait_for(
+                lambda: (pending := self.app.state.manager.tasks[task['id']].pending_approval) is not None and pending['id'] != old['approval_id'], timeout=5))
+        self.assertEqual(self.client.post(f'/tasks/{task["id"]}/approvals', json=old).status_code, 409)
+        current = self.client.get('/tasks/' + task['id']).json()
+        self.assertEqual(current['pending_approval']['tool'], 'run_python')
+        self.assertEqual(self.source.read_text(), 'print(5051)\n')
+        self.assertEqual([e['tool'] for e in current['events'] if e['event'] == 'tool_result'], ['edit_file'])
+        self.client.post(f'/tasks/{task["id"]}/approvals', json={'approval_id': current['pending_approval']['id'], 'approved': True})
+        self.app.state.manager.tasks[task['id']].thread.join(5)
+        final = self.client.get('/tasks/' + task['id']).json()
+        self.assertEqual((final['state'], final['reason'], final['session_saved']), ('completed', 'stop', True))
+        self.assertEqual(len(self.provider.requests), 3)
+        saved = self.client.get('/sessions/' + task['session_id']).json()
+        self.assertEqual([r['result']['ok'] for r in saved['tool_runs']], [True, True])
+        self.assertEqual(saved['tool_runs'][1]['result']['stdout'].strip(), '5051')
+        for _ in range(3):
+            self.assertEqual(self.client.get('/tasks/' + task['id']).json(), final)
+            self.assertEqual(self.client.get('/sessions/' + task['session_id']).json(), saved)
+        self.assertEqual(len(self.provider.requests), 3)
+
+    def test_new_backend_keeps_saved_history_but_not_in_memory_tasks_or_old_token(self):
+        task = self.edit_task()
+        self.client.post(f'/tasks/{task["id"]}/approvals', json={'approval_id': task['pending_approval']['id'], 'approved': False})
+        self.app.state.manager.tasks[task['id']].thread.join(5)
+        saved = self.client.get('/sessions/' + task['session_id']).json()
+        new_provider = OfflineProvider()
+        app = create_app(self.project, self.root / 'logs', KEY, 'new-process-token', provider=new_provider)
+        with TestClient(app, base_url='http://127.0.0.1:8000') as client:
+            self.assertEqual(client.get('/tasks', headers={'Authorization': f'Bearer {TOKEN}'}).status_code, 401)
+            client.headers['Authorization'] = 'Bearer new-process-token'
+            self.assertEqual(client.get('/tasks').json(), [])
+            self.assertEqual(client.get('/tasks/' + task['id']).status_code, 404)
+            self.assertEqual(client.get('/sessions/' + task['session_id']).json(), saved)
+            self.assertEqual(saved['tool_runs'][0]['approved'], False)
+            self.assertIsNone(saved['tool_runs'][0]['result'])
+            self.assertEqual(saved['reason'], 'user_denied')
+            self.assertEqual(new_provider.requests, [])
+            self.assertEqual(self.source.read_text(), 'print(5050)\n')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,5 @@
 import { ApiClient, ApiError } from "./client.js";
-import { PHASES, TOOL_STATES, historyItems, taskItems } from "./view-model.js";
+import { PHASES, TOOL_STATES, historyItems, sessionPhase, taskItems } from "./view-model.js";
 
 const ui = Object.fromEntries(["new-task", "new-chat", "sessions", "project-path", "project-title", "connection", "reconnect",
   "task-status", "timeline", "welcome", "messages", "approval", "approval-tool", "approval-command", "allow", "deny",
@@ -55,7 +55,7 @@ function ToolCard(item) {
 }
 
 function active() { return state.task && !state.task.finished; }
-function phase() { return state.task?.state || "idle"; }
+function phase() { return state.task?.state || sessionPhase(state.session?.reason); }
 function continuable() { return !state.session?.reason || ["stop", "max_model_calls"].includes(state.session.reason); }
 function remember() {
   try { localStorage.setItem(storageKey, JSON.stringify({ sessionId: state.session?.id, taskId: state.task?.id })); } catch { /* 本次会话仍可使用。 */ }
@@ -163,7 +163,7 @@ async function observe() {
 async function openTask(task) {
   state.session = await api.request(`/sessions/${task.session_id}`);
   const initial = task.events.find(event => event.event === "run_start")?.initial_messages;
-  state.history = historyItems(initial ? initial.slice(1, -1) : state.session.messages);
+  state.history = historyItems(initial ? initial.slice(1, -1) : state.session.messages, state.session.tool_runs);
   snapshot(task);
   if (!task.finished) void observe();
 }
@@ -187,7 +187,7 @@ async function connect() {
 async function loadSession(id) {
   observer?.abort();
   state.session = await api.request(`/sessions/${id}`);
-  state.history = historyItems(state.session.messages);
+  state.history = historyItems(state.session.messages, state.session.tool_runs);
   state.task = null; state.events = []; state.cursor = null;
   expandedTools.clear(); remember();
 }
@@ -214,7 +214,7 @@ async function send(event) {
   try {
     if (!state.session) { state.session = await api.request("/sessions", {}); remember(); }
     state.session = await api.request(`/sessions/${state.session.id}`);
-    state.history = historyItems(state.session.messages);
+    state.history = historyItems(state.session.messages, state.session.tool_runs);
     knownTasks = new Set((await api.request("/tasks")).map(task => task.id));
     submitted = true;
     const task = await api.request(`/sessions/${state.session.id}/tasks`, { prompt, stream: true, auto_read: ui["auto-read"].checked, max_model_calls: 8 });
