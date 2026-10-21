@@ -3,13 +3,14 @@ import { PHASES, TOOL_STATES, historyItems, sessionPhase, taskItems } from "./vi
 
 const ui = Object.fromEntries(["new-task", "new-chat", "sessions", "project-path", "project-title", "connection", "reconnect",
   "task-status", "timeline", "welcome", "messages", "approval", "approval-tool", "approval-command", "allow", "deny",
-  "notice", "composer", "prompt", "stop", "send", "auto-read", "usage"].map(id => [id, document.getElementById(id)]));
+  "notice", "composer", "prompt", "stop", "send", "auto-read", "usage", "choose-project"].map(id => [id, document.getElementById(id)]));
+const desktop = window.learnAgentDesktop;
 const token = document.querySelector('meta[name="api-token"]');
 const api = new ApiClient(token.content);
 token.remove();
 const workspace = document.querySelector('meta[name="workspace"]').content;
 const storageKey = `learn-agent-current:${workspace}`;
-const state = { session: null, task: null, history: [], sessions: [], events: [], cursor: null, connected: false, busy: false, deciding: false, error: "" };
+const state = { session: null, task: null, history: [], sessions: [], events: [], cursor: null, connected: false, busy: false, deciding: false, error: "", projectNotice: "" };
 const expandedTools = new Set();
 let observer = null, rendering = false;
 
@@ -80,6 +81,8 @@ function render() {
   ui.stop.disabled = state.busy || Boolean(state.task?.cancel_requested);
   ui["new-task"].disabled = blocked;
   ui["new-chat"].disabled = blocked;
+  ui["choose-project"].hidden = typeof desktop?.chooseProject !== "function";
+  ui["choose-project"].disabled = Boolean(blocked);
   ui.reconnect.hidden = !state.error;
   ui.reconnect.disabled = state.busy;
   ui.connection.textContent = state.connected ? "已连接本地服务" : "连接已断开";
@@ -92,7 +95,7 @@ function render() {
   }
   const notices = { idle: "修改文件和运行命令会逐项确认。", running: "任务进行中，可以停止后续操作。", waiting_approval: "请检查本次操作，允许后才会执行。",
     completed: "任务已完成，可以继续提问。", cancelled: "任务已取消，已有结果保留。", failed: "任务未正常完成，请查看已有结果。", paused: "任务已暂停，请查看原因和累计用量。" };
-  ui.notice.textContent = state.error || (state.task?.cancel_requested && active() ? "正在停止，等待当前操作返回……" :
+  ui.notice.textContent = state.error || state.projectNotice || (state.task?.cancel_requested && active() ? "正在停止，等待当前操作返回……" :
     (state.task?.state === "completed" && active() ? "正在保存会话……" :
       (!continuable() ? "此会话需要检查后恢复；可以新建会话继续。" : notices[phase()])));
   const summary = state.task?.summary;
@@ -200,7 +203,7 @@ async function selectSession(id) {
 function newSession() {
   if (active() || state.busy) return;
   observer?.abort();
-  Object.assign(state, { session: null, task: null, events: [], history: [], cursor: null, error: "" });
+  Object.assign(state, { session: null, task: null, events: [], history: [], cursor: null, error: "", projectNotice: "" });
   expandedTools.clear(); ui.prompt.value = "";
   remember(); render(); ui.prompt.focus();
 }
@@ -210,7 +213,7 @@ async function send(event) {
   if (active() || state.busy || !state.connected || !continuable() || !ui.prompt.value.trim()) return;
   const prompt = ui.prompt.value.trim();
   let knownTasks = new Set(), submitted = false;
-  state.busy = true; state.error = ""; render();
+  state.busy = true; state.error = ""; state.projectNotice = ""; render();
   try {
     if (!state.session) { state.session = await api.request("/sessions", {}); remember(); }
     state.session = await api.request(`/sessions/${state.session.id}`);
@@ -251,6 +254,17 @@ async function stop() {
   finally { state.busy = false; render(); }
 }
 
+async function chooseProject() {
+  if (active() || state.busy) return;
+  state.busy = true; render();
+  try {
+    const chosen = await desktop.chooseProject();
+    if (chosen) state.projectNotice = chosen.current ? `正在使用此项目：${chosen.path}` :
+      `已选择 ${chosen.path}。当前项目仍为 ${workspace}；请先为所选目录启动后端，再重新打开桌面窗口。`;
+  } catch { state.projectNotice = "无法选择项目目录，请重试。"; }
+  finally { state.busy = false; render(); }
+}
+
 ui["project-path"].textContent = workspace;
 ui["project-title"].textContent = workspace.split(/[\\/]/).at(-1) || "工作台";
 ui.composer.addEventListener("submit", send);
@@ -264,4 +278,5 @@ ui.stop.addEventListener("click", stop);
 ui["new-task"].addEventListener("click", newSession);
 ui["new-chat"].addEventListener("click", newSession);
 ui.reconnect.addEventListener("click", connect);
+ui["choose-project"].addEventListener("click", chooseProject);
 void connect();

@@ -52,6 +52,7 @@
 - 已保存的网页会话按真实结束原因显示状态，并使用保存的审批记录区分已拒绝、未执行和结果未确认；刷新与重连只观察原任务，不重新提交或执行历史工具。
 - 提供 FastAPI 本地后端：创建和读取会话、提交任务、查询快照、逐项审批和申请取消，复用现有 Agent 循环、权限、检查点、预算、JSONL 与 SQLite。只监听本机，工作目录在启动时固定，一次运行一个任务；模型密钥只在后端读取。
 - 支持任务 SSE 事件推送：快照与任务专属游标、按 Last-Event-ID 补收、审批就绪和保存完成通知；断开观察连接不取消任务。可选 stream=true 接收模型文本片段，提供 watch_task.py 验证实时观察与断线续收。
+- 提供 Electron 桌面开发入口，打开同一工作台；通过隔离的 preload 接口选择项目目录。选择结果与当前后端目录核对，自动切换与后端生命周期管理尚未接入。
 
 模型调用、多轮对话、清空历史、连续读取两份文件、读取失败后改读其他文件、生成报告、运行日志、读取自动授权、同轮多工具、写入并执行 Python 脚本，以及脚本报错后修改并重新运行的完整流程已由使用者真实运行成功。验收测试已真实验证先失败、修正后通过，主程序实际输出 `5050`，最终回答完整且正确区分输出字段，结束原因为 `stop`。正常会话恢复与超限中断接续也已真实验证成功；工作目录浏览与子目录源码读取也已真实验证成功，模型找到了入口、核心函数并给出正确统计结果。多文件项目已验证先失败、模型修改后四项测试通过，入口输出包含 `min: 12`、`max: 30`，结束原因为 `stop`。局部编辑已验证拒绝时保留原文件、确认后只替换一处，四项测试通过，入口输出总和 30、平均值 10.0、最小值 5、最大值 15，正常结束。代码搜索已真实验证先出现 `truncated: true`，缩小范围后找到 `stats.py` 第 1 行的 `summarize()`，读取源码后正确回答，全程没有修改或运行代码，结束原因为 `stop`。第 25 课拆分后的真实任务已验证搜索与读取自动允许、两次运行分别确认、四项测试通过、入口输出正确，日志正常结束。第 26 课已真实验证根目录与相对路径正确、两次运行确认、测试与入口输出正确、日志记录选定 workspace 并正常结束。第 27 课已真实验证两次 run_command 分别确认、测试和入口输出正确、无超时或截断，授权来源为 user，正常结束。第 28 课已核对真实任务日志与撤回后的文件，第五篇正文与截图已处理完成。第 29 课已真实验证跨进程加载历史、同 ID 续聊且不重放工具，新增对话继续保存，停止原因与 run_end.reason 均为 stop。第 30 课已真实验证拒绝与确认后的状态轨迹，run_python 返回 ok: true、退出码 0、统计结果正确，停止原因与 run_end.reason 均为 stop。第 31 课已真实验证 Ctrl+C 取消、恢复预览中的 NotExecuted、重新请求与授权后执行成功，以及最终 completed / stop。第 32 课已真实验证流式任务：2 次模型请求记录 135 条 model_delta，完整回复先于工具确认和执行，run_python 返回 ok: true、退出码 0、统计结果正确，完整消息保存到 SQLite，最终 completed / stop。第 33 课已真实验证累计用量、预算为 1 时暂停且工具结果数为 0，提高预算后重新确认并运行成功，最终 completed / stop。第 34 课已真实验证语义摘要用于后续请求、同次复用、任务与摘要共用预算；正常任务为 5 次任务请求加 1 次摘要请求、累计 21474 token、completed / stop，额度为 4 时在摘要后 paused / max_model_calls，未运行入口。第 35 课已真实验证资料中的授权声明不跳过确认、编辑与运行分别确认后输出 5051，最终 completed / stop；执行与读取两类明确禁用均无工具结果，最终 cancelled / policy_denied。第 36 课已核对真实恢复日志：两次读取、两次人工确认运行、四项测试通过、入口 5050，三项计划均引用本次有效证据，4 次更新后全部 completed，无 PlanError，最终 completed / stop。第 37 课已真实验收：provider=deepseek，源码读取成功，验收与入口两次执行分别由 user 确认，4 项测试通过、stdout 为 5050，三项计划引用本次证据且全部 completed，无工具错误，8 次请求累计 35145 token、usage_complete=true，最终 completed / stop；新增 12 项测试，累计 351 项通过。第 38 课已接入本地 MCP 示例，新增 19 项测试，当前累计 370 项通过；真实 stdio 与 PowerShell 命令已离线验证，DeepSeek 端到端复验待反馈。
 
@@ -64,6 +65,61 @@
 第七篇公众号正文与截图已由使用者处理完成：[从零开发 Agent（七）：接入扩展，用固定任务检验效果](<公众号文章/07-项目指令扩展与固定任务评测/从零开发 Agent（七）：接入扩展，用固定任务检验效果.md>)。已回到开发与教学，文章、图片和原始评测报告继续保留。
 
 第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后使用者重新验证通过：从快照游标 85 续收到 319，290 条模型片段，4 次模型请求、11470 token；完成快照、结束后续收、两项用户审批、JSONL 与 SQLite 均一致，第 44 课已验收。末段 PowerShell 核验已修正跨脚本块变量作用域问题。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
+
+## 桌面窗口与桥接
+
+第 47 课新增 `desktop/`，使用固定 Electron 45.0.0 运行已有工作台。开发环境需要 Node.js 22.12.0 及以上，本机使用 Node.js 24.16.0；Python 后端仍由终端启动。当前是源码开发模式，尚未制作安装包。
+
+先关闭文章复现副本或旧项目占用的 8000 服务，再在本开发仓库的终端 A 运行并保留：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+.\.venv\Scripts\python.exe -B -X utf8 api.py --workspace .\workspace\demo_project
+```
+
+在终端 B 安装锁定依赖并启动窗口：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+node --version
+npm.cmd ci --prefix .\desktop
+if ($LASTEXITCODE -ne 0) { throw '桌面依赖安装失败。' }
+npm.cmd start --prefix .\desktop
+```
+
+Electron 45 的运行时在首次启动时下载，终端可能先显示 Downloading Electron binary；需要保持网络连接。已安装后只需运行最后一条启动命令。`node_modules/` 已忽略，提交的是 package.json 和 package-lock.json，不提交运行时二进制。
+
+| 文件 | 职责 |
+| --- | --- |
+| desktop/main.cjs | 主进程读取本仓库 logs/.api-server.json，只连接记录中的本机 HTTP 服务；用本地令牌检查 API，创建窗口，验证 IPC 来源，调用原生目录选择器 |
+| desktop/preload.cjs | 在隔离环境中只暴露 chooseProject()，不暴露通用 IPC、文件或命令执行接口 |
+| desktop/package.json、package-lock.json | 固定 Electron 版本、启动与测试命令 |
+| web/index.html、app.js | 桌面环境显示选择项目按钮；浏览器环境隐藏；选择目录后明确提示当前项目是否一致 |
+| tests/test_desktop.cjs | 桌面连接、来源、目录选择、桥接和窗口限制回归测试 |
+
+先认识三个部分：主进程管理窗口和本地能力；渲染进程运行原有网页；preload 把一项明确操作桥接给网页。调用链为：选择项目按钮 → chooseProject() → 固定 IPC 通道 → 主进程验证窗口和主框架来源 → 原生目录选择器 → 返回路径。不是把 Node.js 直接交给页面使用。
+
+窗口启用 contextIsolation、sandbox 和 webSecurity，关闭 nodeIntegration 与 webviewTag，拒绝新窗口、非工作台导航与网页权限请求。这里的 Electron 渲染进程沙箱不等于 Python 工具执行的操作系统沙箱，原有工具授权仍然需要保留。实现参考 [Electron 上下文隔离](https://www.electronjs.org/docs/latest/tutorial/context-isolation)、[IPC](https://www.electronjs.org/docs/latest/tutorial/ipc) 和 [安全建议](https://www.electronjs.org/docs/latest/tutorial/security)。
+
+本课项目选择只返回路径并核对，不自动重启或改变后端工作目录。选当前 demo_project 应显示正在使用此项目；取消应保持原样；选其他目录会提示当前仍使用原项目，需先为所选目录启动后端，再重新打开桌面窗口。侧栏一直显示实际执行目录。自动启动、切换项目与退出收尾在第 48 课实现。
+
+真实验收顺序：
+
+1. 启动后看到独立桌面窗口、demo_project 和已连接本地服务，右上角有选择项目；普通浏览器没有该按钮。
+2. 选择当前 workspace/demo_project，检查返回路径；再次打开并取消；选其他已有目录，检查提示且侧栏实际项目不变。验证完可再选择当前目录。
+3. 新建会话发送：读取 main.py，用 run_command 运行 python -m unittest -v test_stats.py，再用 run_python 运行 main.py。只检查现有代码，不修改文件，简要报告真实结果。测试与入口分别确认；任务进行中选择项目按钮应禁用。当前输入 [7, 14, 21] 对应 total=42、average=14.0，四项测试通过，最终 completed / stop、会话已保存。
+4. 任务结束后关闭窗口，再从终端 B 启动，历史应仍可读。此阶段关闭窗口不关闭 Python 后端，后端仍由终端 A 管理；不要把关闭窗口当作停止正在执行的任务。
+
+本课新增 14 项 Node 桌面测试，原前端 26 项通过，相关 Python 网页测试 11 项通过；Python 内核未改动，完整 Python 测试上次为 481 项通过。Electron 45 的入口加载不设置普通 Node 的 require.main，实际启动已复现并改用 Electron 运行环境判断，回归测试覆盖这个差异。
+
+本地检查使用独立项目和固定模型回复：实际 Electron 窗口已打开，原生目录选择的当前目录、取消与另一目录均通过；从窗口提交任务，测试和入口运行分别确认，四项测试通过，实际输出 total=42、average=14.0，completed / stop、会话已保存，API/JSONL/SQLite 一致。关闭并重新打开窗口，历史与结果仍在，没有新增模型请求或用量，后台仍由终端管理。这些结果与真实 DeepSeek 联合验收分别记录，使用者桌面联合验收待反馈，本次不写新文章。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+npm.cmd test --prefix .\desktop
+node --test .\tests\test_web_client.mjs
+.\.venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests -p test_web.py
+```
 
 ## 完整任务界面
 
