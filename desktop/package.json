@@ -6,7 +6,7 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test ../tests/test_desktop.cjs"
+    "test": "node --test ../tests/test_desktop.cjs ../tests/test_desktop_backend.cjs"
   },
   "engines": {
     "node": ">=22.12.0"

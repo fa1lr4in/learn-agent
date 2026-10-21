@@ -3,7 +3,7 @@ const themeKey = "learn-agent-theme";
 const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
 let preference = "system";
 try {
-  const saved = localStorage.getItem(themeKey);
+  const saved = window.learnAgentDesktop?.getTheme?.() ?? localStorage.getItem(themeKey);
   if (["system", "light", "dark"].includes(saved)) preference = saved;
 } catch {
   // 浏览器禁止存储时，本次页面仍可切换主题。
@@ -26,5 +26,6 @@ document.addEventListener("DOMContentLoaded", () => {
     preference = select.value;
     applyTheme();
     try { localStorage.setItem(themeKey, preference); } catch { /* 仅保留本次选择。 */ }
+    window.learnAgentDesktop?.setTheme?.(preference).catch(() => {});
   });
 });

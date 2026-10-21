@@ -1,10 +1,12 @@
 """Authenticated loopback HTTP routes; credentials stay in the Python process."""
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 from secrets import compare_digest
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -43,7 +45,8 @@ class ApprovalRequest(BaseModel):
 
 
 def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
-               *, port: int = 8000, provider: ModelProvider | None = None) -> FastAPI:
+               *, port: int = 8000, provider: ModelProvider | None = None,
+               instance_id: str | None = None) -> FastAPI:
     if not api_key.strip() or not token.strip():
         raise ValueError("后端模型密钥与本地访问令牌不能为空。")
     manager = TaskManager(workspace, log_dir, api_key, provider)
@@ -96,6 +99,12 @@ def create_app(workspace: Path, log_dir: Path, api_key: str, token: str,
     app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
 
     protected = [Depends(authorize)]
+    identity = {"instance_id": instance_id or uuid4().hex, "pid": os.getpid(),
+                "workspace": str(manager.workspace), "api_version": 1}
+
+    @app.get("/instance", dependencies=protected)
+    def instance():
+        return identity
 
     @app.post("/sessions", status_code=201, dependencies=protected)
     def create_session():

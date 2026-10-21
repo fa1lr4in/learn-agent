@@ -259,9 +259,8 @@ async function chooseProject() {
   state.busy = true; render();
   try {
     const chosen = await desktop.chooseProject();
-    if (chosen) state.projectNotice = chosen.current ? `正在使用此项目：${chosen.path}` :
-      `已选择 ${chosen.path}。当前项目仍为 ${workspace}；请先为所选目录启动后端，再重新打开桌面窗口。`;
-  } catch { state.projectNotice = "无法选择项目目录，请重试。"; }
+    if (chosen) state.projectNotice = chosen.current ? `正在使用此项目：${chosen.path}` : "正在切换项目并连接新服务……";
+  } catch (error) { state.projectNotice = `无法切换项目：${error.message}`; }
   finally { state.busy = false; render(); }
 }
 

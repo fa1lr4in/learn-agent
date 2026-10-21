@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
-const { readBackendInfo, checkBackend, chooseProject, createWindow } = require("../desktop/main.cjs");
+const { chooseProject, createWindow } = require("../desktop/main.cjs");
+const { checkBackend, validateInfo } = require("../desktop/backend.cjs");
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-desktop-test-"));
@@ -15,7 +16,8 @@ function fixture(t) {
   const project = path.join(root, "中文 project");
   fs.mkdirSync(project);
   const file = path.join(root, "server.json");
-  const info = { url: "http://127.0.0.1:8000", token: "offline-local-token-for-tests", workspace: project };
+  const info = { url: "http://127.0.0.1:8000", token: "offline-local-token-for-tests", workspace: project,
+    pid: 123, instance_id: "own-instance" };
   fs.writeFileSync(file, JSON.stringify(info));
   const frame = { url: info.url + "/" };
   const win = { webContents: { mainFrame: frame } };
@@ -23,9 +25,9 @@ function fixture(t) {
   return { root, project, file, info, win, event };
 }
 
-test("desktop reads the local service record and resolves the real project", t => {
-  const { file, info } = fixture(t);
-  assert.deepEqual(readBackendInfo(file), { ...info, workspace: fs.realpathSync(info.workspace) });
+test("desktop accepts only its child process announcement", t => {
+  const { info } = fixture(t);
+  assert.deepEqual(validateInfo(info, info.workspace, 123, "own-instance"), info);
 });
 
 test("service records cannot send the token to another URL or use relative projects", t => {
@@ -34,27 +36,25 @@ test("service records cannot send the token to another URL or use relative proje
     { url: "https://other.example" }, { url: "http://127.0.0.1:8000@other.example" },
     { url: "http://127.0.0.1:8000/other" }, { workspace: "../project" }, { token: "bad\nheader" }
   ]) {
-    fs.writeFileSync(file, JSON.stringify({ ...info, ...changed }));
-    assert.throws(() => readBackendInfo(file));
+    assert.throws(() => validateInfo({ ...info, ...changed }, info.workspace, 123, "own-instance"));
   }
 });
 
-test("nonexistent projects and files are rejected before opening the workbench", t => {
-  const { file, info } = fixture(t);
-  for (const workspace of [path.join(info.workspace, "missing"), file]) {
-    fs.writeFileSync(file, JSON.stringify({ ...info, workspace }));
-    assert.throws(() => readBackendInfo(file));
+test("a different PID, instance or workspace is rejected", t => {
+  const { info } = fixture(t);
+  for (const changed of [{ pid: 456 }, { instance_id: "foreign" }, { workspace: "other" }]) {
+    assert.throws(() => validateInfo({ ...info, ...changed }, info.workspace, 123, "own-instance"));
   }
 });
 
 test("desktop checks the existing service with local authorization and no redirects", async t => {
   const { info } = fixture(t);
   await checkBackend(info, async (url, options) => {
-    assert.equal(url, "http://127.0.0.1:8000/tasks");
+    assert.equal(url, "http://127.0.0.1:8000/instance");
     assert.equal(options.headers.Authorization, `Bearer ${info.token}`);
     assert.equal(options.redirect, "error");
     assert.ok(options.signal instanceof AbortSignal);
-    return new Response("[]");
+    return Response.json({ ...info, api_version: 1 });
   });
 });
 
@@ -85,12 +85,15 @@ test("choosing the current directory returns its path without changing the servi
   assert.equal(fs.readFileSync(file, "utf8"), original);
 });
 
-test("choosing a different directory reports the difference without switching backend", async t => {
+test("choosing a different directory waits for the owned backend switch", async t => {
   const { root, event, win, info } = fixture(t);
   const other = path.join(root, "other"); fs.mkdirSync(other);
-  const result = await chooseProject(event, win, info, { showOpenDialog: async () => ({ canceled: false, filePaths: [other] }) });
+  let switched;
+  const result = await chooseProject(event, win, info, { showOpenDialog: async () => ({ canceled: false, filePaths: [other] }) }, [],
+    async chosen => { switched = chosen; });
   assert.deepEqual(result, { path: fs.realpathSync(other), current: false });
   assert.notEqual(info.workspace, result.path);
+  assert.equal(switched, result.path);
 });
 
 test("cancelled native dialogs return no selected project", async t => {
@@ -115,29 +118,33 @@ test("the picker does not accept a selected file as a project", async t => {
   await assert.rejects(chooseProject(event, win, info, { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) }));
 });
 
-test("the preload bridge exposes one fixed operation without forwarding caller arguments", async () => {
+test("the preload exposes only project selection and typed theme operations", async () => {
   let bridge, invoked;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../desktop/preload.cjs"), "utf8"), {
     require(name) {
       assert.equal(name, "electron");
       return { contextBridge: { exposeInMainWorld(name, api) { assert.equal(name, "learnAgentDesktop"); bridge = api; } },
-        ipcRenderer: { invoke(...args) { invoked = args; return Promise.resolve(null); } } };
+        ipcRenderer: { sendSync(name) { assert.equal(name, "theme:get"); return "dark"; },
+          invoke(...args) { invoked = args; return Promise.resolve(null); } } };
     }
   });
-  assert.deepEqual(Object.keys(bridge), ["chooseProject"]);
+  assert.deepEqual(Object.keys(bridge), ["chooseProject", "getTheme", "setTheme"]);
   assert.equal(await bridge.chooseProject("run-command", "anything"), null);
   assert.deepEqual(invoked, ["project:choose"]);
+  assert.equal(bridge.getTheme(), "dark");
+  await bridge.setTheme("light"); assert.deepEqual(invoked, ["theme:set", "light"]);
 });
 
 test("Electron starts the entry even when its loader does not set require.main", () => {
   const events = {};
   let boot;
   const electron = { app: {
+    requestSingleInstanceLock() { return true; },
     on(name, callback) { events[name] = callback; },
     whenReady() { return { then(callback) { boot = callback; return { catch() {} }; } }; }
   }, dialog: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../desktop/main.cjs"), "utf8"), {
-    require(name) { return name === "electron" ? electron : require(name); },
+    require(name) { return name === "electron" ? electron : name === "./backend.cjs" ? require("../desktop/backend.cjs") : require(name); },
     process: { versions: { electron: "45.0.0" } },
     module: { exports: {} }, __dirname: path.join(__dirname, "../desktop")
   });
@@ -147,7 +154,7 @@ test("Electron starts the entry even when its loader does not set require.main",
 
 test("window isolates the renderer and blocks navigation, popups and web permissions", async t => {
   const { info } = fixture(t);
-  const events = {}, handlers = {}, permissions = {};
+  const events = {}, handlers = {}, permissions = {}, listeners = {};
   let options, opened, loaded, removed;
   class Window {
     constructor(settings) {
@@ -164,8 +171,9 @@ test("window isolates the renderer and blocks navigation, popups and web permiss
     show() {}
   }
   const result = createWindow(info, { BrowserWindow: Window, dialog: {}, ipcMain: {
-    handle(name, callback) { handlers[name] = callback; }, removeHandler(name) { removed = name; }
-  } });
+    handle(name, callback) { handlers[name] = callback; }, removeHandler(name) { removed = name; },
+    on(name, callback) { listeners[name] = callback; }, removeAllListeners(name) { delete listeners[name]; }
+  } }, async () => {}, { value: "dark", save(value) { this.value = value; } });
   await result.loaded;
   assert.equal(loaded, info.url + "/");
   assert.equal(options.webPreferences.nodeIntegration, false);
@@ -183,6 +191,12 @@ test("window isolates the renderer and blocks navigation, popups and web permiss
   assert.deepEqual(opened(), { action: "deny" });
   permissions.request(null, "camera", allowed => assert.equal(allowed, false));
   assert.equal(permissions.check(), false);
-  assert.deepEqual(Object.keys(handlers), ["project:choose"]);
-  events.closed(); assert.equal(removed, "project:choose");
+  assert.deepEqual(Object.keys(handlers), ["project:choose", "theme:set"]);
+  const event = { sender: result.win.webContents, senderFrame: { url: info.url + "/" } };
+  result.win.webContents.mainFrame = event.senderFrame;
+  listeners["theme:get"](event); assert.equal(event.returnValue, "dark");
+  assert.throws(() => handlers["theme:set"](event, "invalid"));
+  assert.throws(() => handlers["theme:set"]({ ...event, sender: {} }, "light"));
+  const foreign = { ...event, sender: {} }; listeners["theme:get"](foreign); assert.equal(foreign.returnValue, null);
+  events.closed(); assert.equal(removed, "theme:set"); assert.deepEqual(listeners, {});
 });

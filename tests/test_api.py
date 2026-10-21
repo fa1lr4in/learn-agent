@@ -118,6 +118,16 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(self.provider.requests, [])
         self.assertFalse(list(self.logs.glob("*.jsonl")))
 
+    def test_instance_identity_requires_auth_and_never_contains_credentials(self):
+        self.assertEqual(self.client.get("/instance", headers={"Authorization": ""}).status_code, 401)
+        identity = self.client.get("/instance").json()
+        self.assertEqual(identity["workspace"], str(self.project.resolve()))
+        self.assertEqual(identity["api_version"], 1)
+        self.assertIsInstance(identity["pid"], int)
+        self.assertTrue(identity["instance_id"])
+        self.assertNotIn(KEY, json.dumps(identity))
+        self.assertNotIn(TOKEN, json.dumps(identity))
+
     def test_unknown_ids_are_not_found(self):
         for path in ["/tasks/unknown", "/sessions/unknown"]:
             self.assertEqual(self.client.get(path).status_code, 404)
