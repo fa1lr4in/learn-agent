@@ -83,7 +83,7 @@ def main():
     copy_files(ROOT / "web", STAGE / "app/web", ["*.js", "*.css", "*.html"])
     copy_files(ROOT / "desktop", STAGE / "app/desktop", ["*.cjs", "*.html", "*.css", "*.js"])
     (STAGE / "app/desktop/build-config.cjs").unlink()
-    copy_files(ROOT, STAGE / "app", ["LICENSE"])
+    copy_files(ROOT, STAGE / "app", ["LICENSE", "THIRD_PARTY_NOTICES.md"])
     copy_files(ROOT / "desktop/demo_project", STAGE / "demo_project", ["**/*.py"])
     metadata = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     app_metadata = {"name": metadata["name"], "version": metadata["version"],

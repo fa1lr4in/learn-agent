@@ -5,7 +5,7 @@ module.exports = {
   directories: { app: "../build/windows/app", output: "../dist" },
   electronVersion: "45.0.0", electronDist: path.join(__dirname, "node_modules/electron/dist"),
   asar: true,
-  files: ["package.json", "desktop/*", "web/*", "LICENSE"],
+  files: ["package.json", "desktop/*", "web/*", "LICENSE", "THIRD_PARTY_NOTICES.md"],
   extraResources: [
     { from: "../build/windows/backend", to: "backend" },
     { from: "../build/windows/demo_project", to: "demo_project" },

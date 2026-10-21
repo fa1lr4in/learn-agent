@@ -4,6 +4,44 @@
 
 课程进度、完整开发路线和公众号写作节点见 [学习与开发总计划](学习与开发总计划.md)。
 
+## 从源码开始
+
+完整开发环境当前验证 Windows x64、Python 3.13.9、Node.js 24.16.0 和 Git。先安装这些工具，再在准备存放项目的目录执行：
+
+```powershell
+git clone https://github.com/fa1lr4in/learn-agent.git
+if ($LASTEXITCODE -ne 0) { throw '克隆失败。' }
+Set-Location -LiteralPath .\learn-agent
+
+python -m venv .venv
+if ($LASTEXITCODE -ne 0) { throw '创建虚拟环境失败。' }
+& .\.venv\Scripts\python.exe -m pip install --only-binary=:all: -r .\desktop\requirements-windows.txt
+if ($LASTEXITCODE -ne 0) { throw '安装 Python 依赖失败。' }
+& .\.venv\Scripts\python.exe -m pip check
+if ($LASTEXITCODE -ne 0) { throw 'Python 依赖检查失败。' }
+
+npm.cmd ci --prefix .\desktop
+if ($LASTEXITCODE -ne 0) { throw '安装桌面依赖失败。' }
+& .\.venv\Scripts\python.exe -B -X utf8 tool_call.py --preview '只预览请求，不运行工具。'
+if ($LASTEXITCODE -ne 0) { throw '请求预览失败。' }
+```
+
+首次安装需要联网下载依赖和 Electron；预览不需要密钥，也不调用模型。完整 Windows 开发环境复用已有的 desktop/requirements-windows.txt，固定全部 35 项后端依赖；根目录 requirements.txt 只固定直接依赖，用于最小安装。使用独立 .venv，不需要修改 PowerShell 执行策略或激活脚本。
+
+启动桌面开发版：
+
+```powershell
+npm.cmd start --prefix .\desktop
+```
+
+首次进入设置页选择项目、填写 DeepSeek 配置，密钥不写入仓库；已有本机设置可能会直接恢复。只使用网页时，可执行 `.\.venv\Scripts\python.exe -B -X utf8 api.py --workspace .\desktop\demo_project`，并打开终端显示的本机地址。实际模型任务会产生 API 用量。
+
+贡献与完整本地检查见 [CONTRIBUTING.md](CONTRIBUTING.md)，故障和功能建议可使用 [Issue 模板](https://github.com/fa1lr4in/learn-agent/issues/new/choose)。依赖来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)，安全边界见 [SECURITY.md](SECURITY.md)。
+
+GitHub 的 [Windows checks](https://github.com/fa1lr4in/learn-agent/actions/workflows/ci.yml) 会在 main 的 push、Pull Request 和手动触发时，从干净 Windows 环境安装锁定依赖、检查依赖一致性、运行 Python/桌面/前端测试并预览请求。不传入 API Key、不调用付费模型；它使用 npm ci --ignore-scripts，不下载或启动 Electron 窗口，也不构建或发布安装包。首次云端结果以 Actions 页面为准。
+
+本次已在不带原 .venv、node_modules、日志和本机配置的干净源码副本验证：新建 .venv、35 项依赖安装与 pip check 通过；CI 模式 npm ci 后 488 项 Python、35 项桌面和 26 项前端检查全部通过，无密钥预览正常；完整 npm ci 后 Electron 45.0.0 可执行。目录仍使用同一台 Windows，不能替代独立干净机器与安装版验收。现有安装版保持 0.1.0，本次没有发布新安装包。
+
 ## 已实现功能
 
 - 调用 DeepSeek 官方 API，发送问题并查看完整响应。
@@ -171,7 +209,7 @@ $securityEvents | Select-Object -Last 1 | Select-Object event, task_state, reaso
 
 本节验证使用更新后的源码。已经安装的 0.1.0 仍是此前的构建，不自动获得源码修改；后续发布流程会重新构建和验收安装包。当前不将源码测试结果当作已安装程序的验收，也不安排新公众号文章。
 
-本次完整回归为 488 项 Python、35 项桌面 Node 和 26 项前端检查通过。README 的练习准备、强制恶意写入请求的拒绝与探针执行步骤已用独立临时项目、固定模型回复复核，未额外调用 DeepSeek；真实模型结果待使用者反馈。
+本次完整回归为 488 项 Python、35 项桌面 Node 和 26 项前端检查通过。README 的练习准备、强制恶意写入请求的拒绝与探针执行步骤已用独立临时项目、固定模型回复复核，未额外调用 DeepSeek；使用者随后已完成真实验收：15 项与 6 项检查通过，被禁用工具执行数为 0、未创建 bypass.txt；探针输出 FAKE-OUTSIDE-DATA、key_present=false，最终 completed / stop。
 
 ## Windows 构建与安装
 
@@ -951,7 +989,7 @@ python tool_call.py "请读取 project.txt，告诉我项目使用什么语言�
 python tool_call.py --auto-read "请用 write_file 创建 main.py，计算 1 到 100（包含 100）的整数和，只打印结果。然后用 run_python 运行它，根据实际输出告诉我结果。"
 ```
 
-可以通过 `DEEPSEEK_API_KEY` 环境变量提供密钥，通过 `DEEPSEEK_MODEL` 指定模型；默认模型为 `deepseek-flash`。程序不会将密钥保存到文件。
+可以通过 `DEEPSEEK_API_KEY` 环境变量提供密钥，通过 `DEEPSEEK_MODEL` 指定模型；默认模型为 `deepseek-flash`。命令行入口不会主动将密钥保存到文件；桌面设置使用前文说明的本机加密配置。
 
 `chat.py --chat` 的多轮历史保存在当前进程的内存中，每次请求会重新发送该历史。在 `你>` 提示后输入 `/clear`，后续请求只保留系统指令和清空之后的对话。该聊天程序退出后历史不保留。`--preview` 只展示首个请求，不进入交互或调用模型。`tool_call.py` 的任务历史可以通过下面的会话恢复功能重新加载。
 
@@ -2283,4 +2321,4 @@ python -m unittest discover -s tests -v
 
 ## 许可证
 
-[MIT](LICENSE)。
+本项目源码使用 [MIT](LICENSE)；第三方组件保留各自许可证，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

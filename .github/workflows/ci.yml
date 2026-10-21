@@ -1,0 +1,51 @@
+name: Windows checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DEEPSEEK_API_KEY: ""
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.9"
+          architecture: x64
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24.16.0"
+      - name: Install locked Python dependencies
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.venv\Scripts\python.exe -m pip install --only-binary=:all: -r .\desktop\requirements-windows.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.venv\Scripts\python.exe -m pip check
+          exit $LASTEXITCODE
+      - name: Install Node dependencies without downloading Electron
+        run: npm.cmd ci --prefix .\desktop --ignore-scripts --no-audit --no-fund
+      - name: Python tests
+        run: .\.venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests -v
+      - name: Desktop tests
+        run: npm.cmd test --prefix .\desktop
+      - name: Web client tests
+        run: node --test .\tests\test_web_client.mjs
+      - name: Request preview without an API key
+        run: .\.venv\Scripts\python.exe -B -X utf8 tool_call.py --preview "只预览请求，不运行工具。"

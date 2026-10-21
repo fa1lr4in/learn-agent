@@ -1,0 +1,25 @@
+name: 故障反馈
+description: 提供环境、复现步骤和脱敏后的实际结果。
+body:
+  - type: markdown
+    attributes:
+      value: 请先检查已有 Issue。不要粘贴 API Key、认证令牌、完整会话数据库或未经检查的日志；疑似安全漏洞请参考 SECURITY.md。
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: Windows 版本、源码提交或安装版版本、Python/Node 版本、模型名称。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现步骤
+      description: 提供可公开的最小文件和命令，说明预期行为与实际行为。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏后的证据
+      description: 错误信息、结束原因、退出码或相关事件片段。删除密钥、令牌、私人路径与项目内容。
