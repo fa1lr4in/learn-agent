@@ -66,6 +66,62 @@
 
 第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后使用者重新验证通过：从快照游标 85 续收到 319，290 条模型片段，4 次模型请求、11470 token；完成快照、结束后续收、两项用户审批、JSONL 与 SQLite 均一致，第 44 课已验收。末段 PowerShell 核验已修正跨脚本块变量作用域问题。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
 
+## 首次使用与桌面设置
+
+第 48 课已由使用者验收。第 49 课加入独立的本地设置窗口：首次选择项目、填写模型、保存加密密钥；工作台中的设置可在任务结束后再次打开。保存设置后重启本地后端，历史继续保留。模型仍使用 DeepSeek 官方 API，不提供任意服务地址输入。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+if (-not $env:DEEPSEEK_API_KEY) {
+    $env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
+}
+npm.cmd start --prefix .\desktop
+```
+
+首次显示“开始使用 learn-agent”。项目默认是本仓库 workspace/demo_project；模型默认沿用 DEEPSEEK_MODEL，未配置时为 deepseek-flash。检测到环境变量中的密钥时，密钥框保持空白并提示可以直接保存，无需再次输入；新用户只在这个窗口输入 Key。保存并启动后进入工作台。
+
+已保存配置且能够解密、项目存在时，后续直接进入工作台。项目选择成功后记住该目录。显式 --workspace 路径优先于记住的目录；未保存或切换时，不覆盖原来的项目记忆。
+
+| 文件 | 本次职责 |
+| --- | --- |
+| desktop/settings.cjs | Settings.load() 读取与解密，view() 返回不含密钥的状态，save() 校验后加密并原子保存，environment() 构造 Python 环境，rememberProject() 保存最近项目 |
+| desktop/settings-window.cjs、settings-preload.cjs | 独立窗口与固定 IPC；只允许该设置主框架访问表单、原生目录选择、固定日志目录和脱敏诊断 |
+| desktop/settings.html、settings.css、settings.js | 极简设置表单、空密钥沿用提示、保存与取消、日志诊断界面，支持浅色和暗黑模式 |
+| desktop/main.cjs | 首次使用分流；按已保存配置启动后端；保存后重启；无可用配置或启动失败时回到设置修复；任务未保存完成时禁止更换配置或项目 |
+| desktop/preload.cjs、web/index.html、web/app.js | 工作台只增加打开设置能力，普通浏览器隐藏按钮，任务中禁用按钮 |
+| desktop/package.json、tests/test_desktop.cjs、tests/test_desktop_settings.cjs | 设置入口、密钥恢复、坏配置修复、失败保留、来源限制和任务运行期间保护的回归检查 |
+
+密钥流向：独立设置页 → 固定本地 IPC → 桌面主进程 → safeStorage 异步加密 → Electron 用户数据目录中的 settings.json。文件只含版本、模型、项目路径和 encryptedKey 密文，不写入 Git 仓库，也不更新或删除现有环境变量。启动 Python 时通过子进程环境传入解密后的密钥。任务网页不能读取已保存密钥，设置页禁止网络连接，密码框不回填已有值。
+
+Windows 下 safeStorage 使用 DPAPI 保护加密密钥，保护磁盘上的保存内容；同一 Windows 账户运行的其他程序仍可能访问。这不是工具执行沙箱，不能宣称可抵御同账户恶意程序。参考 [Electron safeStorage 官方文档](https://www.electronjs.org/docs/latest/api/safe-storage)。本节实现与验证针对 Windows。
+
+保存时先校验模型名称格式、已有项目目录与密钥，再加密并原子替换配置。失败会保留旧配置，不退回明文保存。已保存密钥优先于环境变量，留空表示沿用当前可用值，输入新值表示替换。坏文件、解密失败或最近项目被移走时显示修复提示。保存成功只确认本地配置和后端启动，DeepSeek 密钥与模型权限仍需实际任务验证。
+
+真实联合验收顺序：
+
+1. 关闭旧桌面窗口，执行启动命令。在首次设置中确认项目为 workspace/demo_project、模型为 deepseek-flash。若提示已读取环境变量密钥，保持 Key 为空并保存启动。
+2. 从工作台再次打开设置。应提示已保存本机加密密钥，输入框为空；查看诊断，确认 model、workspace、keySource、backendRunning、pythonExists 正确，不含 Key 或 encryptedKey。打开日志目录应定位到本仓库 logs。
+3. 保持密钥为空，保存并重启后端，确认仍可连接。保存过程中不要重复点击。
+4. 新建会话发送下面任务。测试与入口分别确认，四项测试通过；当前练习输入 [7,14,21]，入口 total=42、average=14.0，最终 completed / stop、会话已保存。运行中设置和选择项目按钮禁用。
+
+```text
+读取 main.py，用 run_command 运行 python -m unittest -v test_stats.py，再用 run_python 运行 main.py。只检查现有代码，不创建或修改文件，简要报告真实结果。
+```
+
+5. 任务结束后选择另一已有目录，例如本仓库 workspace，关闭后不带 --workspace 重开，应直接进入记住的 workspace。再选择 workspace/demo_project，重开后练习目录和历史仍在。
+6. 再次打开设置确认 keySource 为 saved，密钥框为空。可以新建会话发送“只回复：设置恢复成功”，检查真实模型调用。若配置无法读取或服务启动失败，设置页保留修复与诊断入口。
+
+诊断显示运行版本、Python 是否存在、模型、项目、密钥来源、设置路径、固定日志目录与最近启动错误；不返回密钥或密文，也不提供上传按钮。不要贴出设置文件或含本地访问令牌的 .desktop-server.json 原文；核验只需报告状态。
+
+本节新增 13 项设置测试，桌面共 33 项、前端 26 项、相关 Python 网页 11 项通过；完整 Python 上次为 482 项通过。原生 Electron 已检查首次沿用环境变量保存、密码框不回显、诊断、取消选择和空密钥保存重启。实际 Windows 异步加解密恢复结果一致，配置文件无测试密钥明文；项目切换后不带模型环境变量或项目参数重开，仍从本机配置启动最近项目并保留历史，没有重放任务。独立临时项目的固定模型回复任务已实际运行四项测试和入口，输出 42/14.0，completed / stop、会话保存；这些是本地检查，真实 DeepSeek 联合验收待反馈。本节不写文章，第九篇仍待桌面构建与分发里程碑后单独安排。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+npm.cmd test --prefix .\desktop
+node --test .\tests\test_web_client.mjs
+.\.venv\Scripts\python.exe -B -X utf8 -m unittest discover -s tests -p test_web.py
+```
+
 ## 桌面窗口与后端生命周期
 
 第 47 课桌面联合验收已由使用者完成：目录选择、取消和提示正确，两次运行分别确认，四项测试通过，入口 total=42、average=14.0，completed / stop，会话保存和重开历史正常。第 48 课让桌面主进程管理自己的 Python 后端，启动窗口前确认服务身份，切换项目时更换后端，关闭窗口时取消任务并等待保存。
@@ -106,7 +162,7 @@ npm.cmd start --prefix .\desktop -- --workspace 'C:\Users\macbook\Desktop\科研
 
 桌面不读取或复用 logs/.api-server.json，也不接管其他终端的 8000 服务。logs/.desktop-server.json 只记录本次桌面管理的服务，供本机诊断，关闭后移除；下次启动不会相信旧文件。它含临时本地访问令牌，不要贴出原文。模型 Key 仍只从环境变量进入 Python，不写入该文件。日志目录继续被 Git 忽略。
 
-项目切换只有在任务结束且保存完成后可用，主进程还会重新查询任务状态。选当前目录或取消不会重启；选另一个已有目录会等待旧服务退出，再启动新服务并重新加载实际目录。项目历史继续保存在本仓库 logs/sessions.sqlite3，按 workspace 过滤；端口改变后可以从左侧历史会话打开，不会重放工具。此阶段重开默认目录由启动参数决定，最近项目记忆与模型设置留到第 49 课。
+项目切换只有在任务结束且保存完成后可用，主进程还会重新查询任务状态。选当前目录或取消不会重启；选另一个已有目录会等待旧服务退出，再启动新服务并重新加载实际目录。项目历史继续保存在本仓库 logs/sessions.sqlite3，按 workspace 过滤；端口改变后可以从左侧历史会话打开，不会重放工具。第 49 课已接入最近项目记忆与模型设置，当前启动流程见前文首次使用部分。
 
 退出时关闭主进程持有的标准输入管道，Python 收到 EOF 后拒绝新任务、唤醒并取消审批、等待当前操作返回、记录结束并保存 SQLite，最后退出 HTTP 服务。正常退出会等待这些步骤。超过 15 秒仍未返回时，桌面强制清理自己启动的进程树并明确提示：当前会话可能未保存完整。模型请求和工具仍采用已有的合作式取消，不能保证任意外部操作立即中断；工具执行也尚无操作系统沙箱。
 

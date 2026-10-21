@@ -3,7 +3,7 @@ import { PHASES, TOOL_STATES, historyItems, sessionPhase, taskItems } from "./vi
 
 const ui = Object.fromEntries(["new-task", "new-chat", "sessions", "project-path", "project-title", "connection", "reconnect",
   "task-status", "timeline", "welcome", "messages", "approval", "approval-tool", "approval-command", "allow", "deny",
-  "notice", "composer", "prompt", "stop", "send", "auto-read", "usage", "choose-project"].map(id => [id, document.getElementById(id)]));
+  "notice", "composer", "prompt", "stop", "send", "auto-read", "usage", "choose-project", "settings"].map(id => [id, document.getElementById(id)]));
 const desktop = window.learnAgentDesktop;
 const token = document.querySelector('meta[name="api-token"]');
 const api = new ApiClient(token.content);
@@ -83,6 +83,8 @@ function render() {
   ui["new-chat"].disabled = blocked;
   ui["choose-project"].hidden = typeof desktop?.chooseProject !== "function";
   ui["choose-project"].disabled = Boolean(blocked);
+  ui.settings.hidden = typeof desktop?.openSettings !== "function";
+  ui.settings.disabled = Boolean(blocked);
   ui.reconnect.hidden = !state.error;
   ui.reconnect.disabled = state.busy;
   ui.connection.textContent = state.connected ? "已连接本地服务" : "连接已断开";
@@ -278,4 +280,7 @@ ui["new-task"].addEventListener("click", newSession);
 ui["new-chat"].addEventListener("click", newSession);
 ui.reconnect.addEventListener("click", connect);
 ui["choose-project"].addEventListener("click", chooseProject);
+ui.settings.addEventListener("click", () => {
+  void desktop.openSettings().catch(error => { state.error = error.message; render(); });
+});
 void connect();

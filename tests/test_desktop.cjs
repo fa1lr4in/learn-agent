@@ -128,9 +128,10 @@ test("the preload exposes only project selection and typed theme operations", as
           invoke(...args) { invoked = args; return Promise.resolve(null); } } };
     }
   });
-  assert.deepEqual(Object.keys(bridge), ["chooseProject", "getTheme", "setTheme"]);
+  assert.deepEqual(Object.keys(bridge), ["chooseProject", "openSettings", "getTheme", "setTheme"]);
   assert.equal(await bridge.chooseProject("run-command", "anything"), null);
   assert.deepEqual(invoked, ["project:choose"]);
+  await bridge.openSettings("ignored"); assert.deepEqual(invoked, ["desktop:settings"]);
   assert.equal(bridge.getTheme(), "dark");
   await bridge.setTheme("light"); assert.deepEqual(invoked, ["theme:set", "light"]);
 });
@@ -144,7 +145,7 @@ test("Electron starts the entry even when its loader does not set require.main",
     whenReady() { return { then(callback) { boot = callback; return { catch() {} }; } }; }
   }, dialog: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../desktop/main.cjs"), "utf8"), {
-    require(name) { return name === "electron" ? electron : name === "./backend.cjs" ? require("../desktop/backend.cjs") : require(name); },
+    require(name) { return name === "electron" ? electron : name.startsWith("./") ? require("../desktop/" + name.slice(2)) : require(name); },
     process: { versions: { electron: "45.0.0" } },
     module: { exports: {} }, __dirname: path.join(__dirname, "../desktop")
   });
@@ -173,7 +174,7 @@ test("window isolates the renderer and blocks navigation, popups and web permiss
   const result = createWindow(info, { BrowserWindow: Window, dialog: {}, ipcMain: {
     handle(name, callback) { handlers[name] = callback; }, removeHandler(name) { removed = name; },
     on(name, callback) { listeners[name] = callback; }, removeAllListeners(name) { delete listeners[name]; }
-  } }, async () => {}, { value: "dark", save(value) { this.value = value; } });
+  } }, async () => {}, { value: "dark", save(value) { this.value = value; } }, () => {});
   await result.loaded;
   assert.equal(loaded, info.url + "/");
   assert.equal(options.webPreferences.nodeIntegration, false);
@@ -191,12 +192,12 @@ test("window isolates the renderer and blocks navigation, popups and web permiss
   assert.deepEqual(opened(), { action: "deny" });
   permissions.request(null, "camera", allowed => assert.equal(allowed, false));
   assert.equal(permissions.check(), false);
-  assert.deepEqual(Object.keys(handlers), ["project:choose", "theme:set"]);
+  assert.deepEqual(Object.keys(handlers), ["project:choose", "theme:set", "desktop:settings"]);
   const event = { sender: result.win.webContents, senderFrame: { url: info.url + "/" } };
   result.win.webContents.mainFrame = event.senderFrame;
   listeners["theme:get"](event); assert.equal(event.returnValue, "dark");
   assert.throws(() => handlers["theme:set"](event, "invalid"));
   assert.throws(() => handlers["theme:set"]({ ...event, sender: {} }, "light"));
   const foreign = { ...event, sender: {} }; listeners["theme:get"](foreign); assert.equal(foreign.returnValue, null);
-  events.closed(); assert.equal(removed, "theme:set"); assert.deepEqual(listeners, {});
+  events.closed(); assert.equal(removed, "desktop:settings"); assert.deepEqual(listeners, {});
 });

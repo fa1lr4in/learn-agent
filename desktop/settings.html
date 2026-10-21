@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>learn-agent · 设置</title>
+  <link rel="stylesheet" href="settings.css">
+  <script src="settings.js" defer></script>
+</head>
+<body>
+  <main class="settings-page">
+    <h1 id="title">设置</h1>
+    <p class="intro">连接 DeepSeek，从你的项目开始。</p>
+    <form id="settings-form" autocomplete="off">
+      <label for="workspace">项目目录</label>
+      <div class="project-row"><input id="workspace" readonly required><button id="choose" class="button secondary" type="button">选择目录</button></div>
+      <label for="model">模型名称</label>
+      <input id="model" required maxlength="100" placeholder="deepseek-flash" spellcheck="false">
+      <p class="hint">使用 DeepSeek 官方 API，模型名称须与你的账号可用模型一致。</p>
+      <label for="api-key">API Key</label>
+      <input id="api-key" type="password" maxlength="512" placeholder="留空沿用已有密钥" autocomplete="off" spellcheck="false">
+      <p id="key-status" class="hint"></p>
+      <p class="hint">保存时使用 Windows 加密，仅在当前电脑账户下使用。密钥不会回显，也不写入项目目录。</p>
+      <p id="message" class="notice" role="status"></p>
+      <div class="actions"><button id="cancel" class="button secondary" type="button">取消</button><button id="save" class="button primary" type="submit">保存并启动</button></div>
+    </form>
+    <section class="support" aria-label="日志与诊断">
+      <button id="logs" class="button secondary" type="button">打开日志目录</button>
+      <button id="diagnostics" class="button secondary" type="button">查看诊断</button>
+      <pre id="diagnostic-output" hidden></pre>
+    </section>
+  </main>
+</body>
+</html>

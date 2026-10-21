@@ -1,0 +1,18 @@
+@import url("../web/styles.css");
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { color-scheme: dark; --bg: #1b1b1b; --text: #e7e7e7; --muted: #a0a0a0; --border: #454545; --line: #303030; --surface: #252525; --button: #e7e7e7; --button-text: #202020; }
+}
+.settings-page { max-width: 650px; margin: 0 auto; padding: 32px; }
+.settings-page h1 { font-size: 22px; }
+.intro { margin: 10px 0 28px; font-size: 13px; color: var(--muted); }
+label { display: block; margin: 20px 0 9px; font-size: 13px; }
+input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--bg); font: 13px "Segoe UI", "Microsoft YaHei", sans-serif; }
+input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.project-row { display: flex; gap: 12px; }
+.project-row input { min-width: 0; }
+.project-row button { flex: 0 0 auto; }
+.hint { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 9px 0; }
+.notice { min-height: 24px; white-space: pre-wrap; }
+.actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.support { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 14px; }
+.support pre { padding: 14px; background: var(--surface); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
