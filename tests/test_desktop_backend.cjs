@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
+const { spawnSync } = require("node:child_process");
 const { setTimeout: delay } = require("node:timers/promises");
 const { Backend } = require("../desktop/backend.cjs");
 
@@ -11,7 +12,7 @@ const repo = path.resolve(__dirname, "..");
 const key = "offline-only-key-for-lifecycle-tests";
 
 function fixture(t, options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-lifecycle-"));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-lifecycle-")));
   const project = path.join(root, "中文 project"); fs.mkdirSync(project);
   fs.symlinkSync(path.join(repo, ".venv"), path.join(root, ".venv"), process.platform === "win32" ? "junction" : "dir");
   fs.writeFileSync(path.join(root, "api.py"), `import sys,runpy\nsys.path.insert(0,${JSON.stringify(repo)})\nrunpy.run_path(${JSON.stringify(path.join(repo, "tests/desktop_backend_fixture.py"))},run_name='__main__')\n`);
@@ -21,7 +22,7 @@ function fixture(t, options = {}) {
   t.after(async () => {
     await backend.stop();
     if (!t.passed && fs.existsSync(backend.diagnostics)) t.diagnostic(fs.readFileSync(backend.diagnostics, "utf8"));
-    assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
+    assert.ok(root.startsWith(fs.realpathSync.native(os.tmpdir()) + path.sep));
     fs.rmSync(root, { recursive: true, force: true });
   });
   return { root, project, backend };
@@ -59,6 +60,19 @@ test("owned dynamic server ignores a stale record and an occupied default port",
   await assert.rejects(fetch(info.url + "/health"));
   assert.equal(fs.existsSync(backend.record), false);
   assert.equal(fs.readFileSync(path.join(root, "logs/.api-server.json"), "utf8"), stale);
+});
+
+test("backend accepts a Windows short path for the selected project", { skip: process.platform !== "win32" }, async t => {
+  const { project, backend } = fixture(t);
+  const code = "import ctypes,sys; b=ctypes.create_unicode_buffer(32768); " +
+    "n=ctypes.windll.kernel32.GetShortPathNameW(sys.argv[1],b,len(b)); assert n; print(b.value)";
+  const result = spawnSync(path.join(repo, ".venv/Scripts/python.exe"), ["-B", "-X", "utf8", "-c", code, project],
+    { encoding: "utf8", windowsHide: true, env: { ...process.env, DEEPSEEK_API_KEY: "" } });
+  assert.equal(result.status, 0, result.stderr);
+  const shortPath = result.stdout.trim();
+  if (shortPath.toLowerCase() === fs.realpathSync.native(project).toLowerCase()) return t.skip("No distinct short path");
+  const info = await backend.start(shortPath);
+  assert.equal(info.workspace.toLowerCase(), fs.realpathSync.native(project).toLowerCase());
 });
 
 test("closing at approval persists cancellation without executing either tool or requesting another reply", async t => {

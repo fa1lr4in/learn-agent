@@ -265,6 +265,29 @@ class EvaluationTests(unittest.TestCase):
             checks, acceptance=evaluation.grade(case,root,before,self.entries(case),self.grader)
         self.assertTrue(acceptance["ok"],acceptance)
 
+    @unittest.skipUnless(os.name == "nt", "Windows short path aliases")
+    def test_find_run_matches_windows_short_workspace_path(self):
+        import ctypes
+
+        workspace = self.root / "workspace with a long name"
+        workspace.mkdir()
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = ctypes.windll.kernel32.GetShortPathNameW(str(workspace), buffer, len(buffer))
+        if not size or Path(buffer.value) == workspace.resolve():
+            self.skipTest("This volume does not provide a distinct short path")
+        short_workspace = Path(buffer.value)
+        self.assertTrue(short_workspace.samefile(workspace))
+        self.logs.mkdir()
+        expected = self.logs / "run-current.jsonl"
+        unrelated = self.logs / "run-other.jsonl"
+        for path, selected in [(expected, workspace), (unrelated, self.root)]:
+            events = [{"event": "run_start", "workspace": str(selected.resolve())},
+                      {"event": "run_end", "reason": "stop"}]
+            path.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+        with patch.object(evaluation, "LOG_DIR", self.logs):
+            found, _ = evaluation.find_run(short_workspace, set())
+        self.assertEqual(found, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,9 +8,9 @@ const { chooseProject, createWindow } = require("../desktop/main.cjs");
 const { checkBackend, validateInfo } = require("../desktop/backend.cjs");
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-desktop-test-"));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-desktop-test-")));
   t.after(() => {
-    assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
+    assert.ok(root.startsWith(fs.realpathSync.native(os.tmpdir()) + path.sep));
     fs.rmSync(root, { recursive: true, force: true });
   });
   const project = path.join(root, "中文 project");

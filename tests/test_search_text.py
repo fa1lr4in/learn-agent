@@ -15,7 +15,7 @@ from learn_agent import loop, permissions, tools
 class SearchTextTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="learn-agent-test-")
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.assertEqual(self.root.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.addCleanup(self.directory.cleanup)
         self.workspace = self.root / "workspace"

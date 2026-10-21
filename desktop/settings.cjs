@@ -5,7 +5,7 @@ const { randomUUID } = require("node:crypto");
 function projectDirectory(value) {
   if (typeof value !== "string" || !path.isAbsolute(value)) throw new Error("请选择已有的项目目录。");
   try {
-    const resolved = fs.realpathSync(value);
+    const resolved = fs.realpathSync.native(value);
     if (fs.statSync(resolved).isDirectory()) return resolved;
   } catch { /* report a fixed message, never echo submitted credentials */ }
   throw new Error("项目目录不存在或无法访问，请重新选择。");

@@ -18,7 +18,7 @@ class CheckpointTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="learn-agent-test-")
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+        self.root = Path(directory.name).resolve()
         self.assertEqual(self.root.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.project = self.root / "检查点 项目"
         self.project.mkdir()

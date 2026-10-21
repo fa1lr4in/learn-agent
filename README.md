@@ -40,7 +40,7 @@ npm.cmd start --prefix .\desktop
 
 GitHub 的 [Windows checks](https://github.com/fa1lr4in/learn-agent/actions/workflows/ci.yml) 会在 main 的 push、Pull Request 和手动触发时，从干净 Windows 环境安装锁定依赖、检查依赖一致性、运行 Python/桌面/前端测试并预览请求。不传入 API Key、不调用付费模型；它使用 npm ci --ignore-scripts，不下载或启动 Electron 窗口，也不构建或发布安装包。首次云端结果以 Actions 页面为准。
 
-本次已在不带原 .venv、node_modules、日志和本机配置的干净源码副本验证：新建 .venv、35 项依赖安装与 pip check 通过；CI 模式 npm ci 后 488 项 Python、35 项桌面和 26 项前端检查全部通过，无密钥预览正常；完整 npm ci 后 Electron 45.0.0 可执行。目录仍使用同一台 Windows，不能替代独立干净机器与安装版验收。现有安装版保持 0.1.0，本次没有发布新安装包。
+本次已在不带原 .venv、node_modules、日志和本机配置的干净源码副本验证：新建 .venv、35 项依赖安装与 pip check 通过；CI 模式 npm ci 后初次 488 项 Python、35 项桌面和 26 项前端检查通过，无密钥预览正常；完整 npm ci 后 Electron 45.0.0 可执行。首轮云端检查随后发现 Windows 短路径问题：评测器漏匹配日志，部分测试夹具把短路径与长路径当成不同目录；本地也复现了桌面后端同类身份误判。已解析评测路径、改用 Node 原生路径解析并修正测试夹具，保留权限与身份断言，新增各一项真实短路径回归。修复后的干净副本在短路径环境下 489 项 Python、36 项桌面与 26 项前端检查通过。目录仍使用同一台 Windows，不能替代独立干净机器与安装版验收。现有安装版保持 0.1.0，本次没有发布新安装包。
 
 ## 已实现功能
 

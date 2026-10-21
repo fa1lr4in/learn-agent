@@ -50,7 +50,7 @@ class LocalApiTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="learn-agent-api-test-")
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+        self.root = Path(directory.name).resolve()
         self.project = self.root / "中文 项目"
         self.project.mkdir()
         (self.project / "main.py").write_text("def sum_to(n):\n    return sum(range(1, n + 1))\n\nif __name__ == '__main__':\n    print(sum_to(100))\n", encoding="utf-8")

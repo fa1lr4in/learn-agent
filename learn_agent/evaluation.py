@@ -44,6 +44,7 @@ def launch_agent(workspace, prompt, max_model_calls):
 
 
 def find_run(workspace, previous):
+    workspace = workspace.resolve()
     candidates = []
     for path in set(LOG_DIR.glob("run-*.jsonl")) - previous:
         if ".child-" in path.name:

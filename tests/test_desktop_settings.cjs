@@ -12,7 +12,7 @@ const { createSettingsWindow } = require("../desktop/settings-window.cjs");
 const key = "offline-only-settings-credential";
 
 function fixture(t, env = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-settings-"));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-settings-")));
   const project = path.join(root, "中文 project"); fs.mkdirSync(project);
   const ciphertexts = new Map();
   const crypto = {
@@ -21,7 +21,7 @@ function fixture(t, env = {}) {
     async decryptStringAsync(bytes) { const result = ciphertexts.get(bytes.toString("base64")); if (!result) throw Error("unavailable"); return { result }; }
   };
   const store = new Settings(root, crypto, { workspace: project, env });
-  t.after(() => { assert.equal(path.dirname(root), os.tmpdir()); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { assert.equal(path.dirname(root), fs.realpathSync.native(os.tmpdir())); fs.rmSync(root, { recursive: true, force: true }); });
   const input = { workspace: project, model: "deepseek-flash", apiKey: key };
   return { root, project, crypto, store, input };
 }

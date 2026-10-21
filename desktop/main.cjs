@@ -19,7 +19,7 @@ async function chooseProject(event, win, info, dialog, args = [], switchProject)
     title: "选择项目目录", defaultPath: info.workspace, properties: ["openDirectory"]
   });
   if (selected.canceled || !selected.filePaths.length) return null;
-  const chosen = fs.realpathSync(selected.filePaths[0]);
+  const chosen = fs.realpathSync.native(selected.filePaths[0]);
   if (!fs.statSync(chosen).isDirectory()) throw new Error("请选择已有目录。");
   const current = sameDirectory(chosen, info.workspace);
   if (!current) await switchProject(chosen);

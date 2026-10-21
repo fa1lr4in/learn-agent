@@ -57,7 +57,7 @@ class Backend {
 
   async start(workspace) {
     if (this.child) throw new Error("此后端实例已启动。");
-    const project = fs.realpathSync(workspace);
+    const project = fs.realpathSync.native(workspace);
     if (!fs.statSync(project).isDirectory()) throw new Error("项目目录不存在或不是目录。");
     if (!fs.existsSync(this.python)) throw new Error("找不到 Python 运行时；源码版请创建 .venv，安装版请重新安装应用。");
     const instanceId = randomUUID();

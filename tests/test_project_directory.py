@@ -15,7 +15,7 @@ class ProjectDirectoryTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="learn-agent-test-")
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+        self.root = Path(directory.name).resolve()
         self.assertEqual(self.root.resolve().parent, Path(tempfile.gettempdir()).resolve())
         self.default = self.root / "课程 workspace"
         (self.default / "demo_project").mkdir(parents=True)
