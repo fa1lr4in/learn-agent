@@ -110,7 +110,7 @@ test("two real executions have separate approvals and saved history survives res
 
 test("startup failures leave no owned child, no secret diagnostics and no usable record", async t => {
   const { root, project, backend } = fixture(t, { env: { ...process.env, DEEPSEEK_API_KEY: "" } });
-  await assert.rejects(backend.start(project), /DEEPSEEK_API_KEY/);
+  await assert.rejects(backend.start(project), /模型密钥/);
   assert.equal(backend.exited, true);
   assert.equal(fs.existsSync(backend.record), false);
   assert.match(fs.readFileSync(backend.diagnostics, "utf8"), /DEEPSEEK_API_KEY/);

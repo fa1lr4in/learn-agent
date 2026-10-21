@@ -66,6 +66,80 @@
 
 第 42 课已由使用者验收：主题切换与刷新保存、两次审批、拒绝和停止均成功，并完成工具卡文案修改。第 43 课已由使用者完成真实 DeepSeek 联合验收：两次执行分别确认、四项测试通过、入口统计正确、completed / stop，finished 与 session_saved 为 true，persistence_error 为空，日志与累计用量正常。第 44 课真实运行已核验：两次审批、四项测试与入口统计正确，309 条模型片段，任务 completed / stop，会话已保存。观察客户端保存游标时遇到 Windows 文件占用，已复现并增加有限重试；已从原任务游标 265 连续补收至 339 的 task_finished，没有新增模型请求或重跑工具。修复后使用者重新验证通过：从快照游标 85 续收到 319，290 条模型片段，4 次模型请求、11470 token；完成快照、结束后续收、两项用户审批、JSONL 与 SQLite 均一致，第 44 课已验收。末段 PowerShell 核验已修正跨脚本块变量作用域问题。第八篇公众号继续等待网页阶段形成明显里程碑后单独写作。
 
+## Windows 构建与安装
+
+第 49 课已由使用者完成真实验收：首次设置、加密密钥保存、空密钥重启、saved 来源、两次审批、四项测试、入口 42/14.0、会话保存与最近项目恢复均正常。第 50 课增加 Windows x64 安装包，版本为 0.1.0。
+
+安装包包含 Electron 45.0.0、网页、Python 后端、独立 CPython 3.13.9 和锁定的后端依赖。安装后不需要源码目录、.venv、系统 Node.js 或系统 Python。运行用户项目所需的额外第三方依赖仍需另行准备。构建使用 [CPython 官方 Windows 文档介绍的 NuGet 发行包](https://docs.python.org/3.13/using/windows.html#the-nuget-org-packages)，下载地址与 SHA256 固定在构建脚本；安装器使用 [electron-builder NSIS](https://www.electron.build/docs/nsis/)。
+
+已经构建好的产物位于本地 dist/learn-agent-Setup-0.1.0-x64.exe，SHA256 在同目录 SHA256SUMS.txt。分发时只需这个安装器；单独复制 win-unpacked 中的 exe 无法运行，免安装测试需要整个 win-unpacked 目录。产物不提交 Git，也没有自动发布 GitHub Release。当前为未签名的本地构建。
+
+开发者重新构建时，需要 Windows x64、已建好的 .venv、Node.js 22.12.0 以上版本和网络。已有依赖不用重装；新克隆仓库先执行 npm.cmd ci --prefix .\desktop，再执行下面命令：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+npm.cmd run build:win --prefix .\desktop
+if ($LASTEXITCODE -ne 0) { throw 'Windows 构建失败，请查看输出。' }
+Get-FileHash -LiteralPath .\dist\learn-agent-Setup-0.1.0-x64.exe -Algorithm SHA256
+Get-Content -LiteralPath .\dist\SHA256SUMS.txt
+```
+
+构建脚本只复制桌面程序、网页、后端 Python 源码和专用示例项目。根目录 workspace、公众号文章、logs、.env、.venv 和本机设置均不进入安装包。build/ 是可重建的暂存目录，dist/ 是分发产物目录，两者都被 Git 忽略。安装资源中的 build-manifest.json 记录版本、Python 来源校验和与文件哈希；Python 及依赖的许可证随各自运行时和包保留。
+
+| 文件 | 本次变化 |
+| --- | --- |
+| scripts/build_windows.py、desktop/requirements-windows.txt | 校验并展开独立 Python，安装固定版本依赖，按允许的来源暂存资源，生成清单、安装器与 SHA256 |
+| desktop/build-config.cjs、package.json、package-lock.json | 锁定 electron-builder，增加 build:win 和 test:package，制作当前用户安装的 NSIS 包 |
+| desktop/runtime.cjs、main.cjs、backend.cjs | 区分开发与安装路径；安装版调用自带 Python，把日志和会话放入用户目录；不继承宿主 Python 的路径配置 |
+| api.py、desktop/settings-window.cjs | 后端支持固定日志目录，设置中的日志入口和诊断显示实际安装运行路径 |
+| desktop/demo_project/ | 独立、固定的分发示例，首次复制到用户目录；已有示例目录与用户修改不会被覆盖 |
+| tests/test_desktop_runtime.cjs、test_windows_package.cjs | 开发/安装路径、示例不覆盖、无开发路径运行、两次审批、测试、入口与恢复检查 |
+
+安装和数据目录各自承担不同职责：
+
+| 内容 | 安装版位置 |
+| --- | --- |
+| Electron、网页和后端 | 安装目录与 resources/backend；仅作为程序资源读取 |
+| 密文设置与主题 | Electron 用户数据目录，默认 %APPDATA%\learn-agent-desktop |
+| JSONL、会话 SQLite、启动诊断 | 用户数据目录下 logs/ |
+| 首次准备的示例 | 用户数据目录下 projects/demo_project/ |
+| 用户自己选择的项目 | 所选目录，保持原位置 |
+
+源码版仍使用仓库 logs/，安装版使用用户数据 logs/，旧源码日志不会自动迁移。模型设置与最近项目继续沿用本机已有配置；首次安装到新账户时才显示全新的首次设置。实际路径以设置中的诊断为准。卸载程序保留用户数据与自己选择的项目，重新安装可以恢复配置和历史。
+
+安装版真实联合验收：
+
+1. 关闭源码版桌面窗口。运行下面命令，在安装向导中完成当前用户安装，随后从开始菜单打开 learn-agent；后续不需要运行 npm、api.py 或虚拟环境。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+Start-Process -FilePath .\dist\learn-agent-Setup-0.1.0-x64.exe
+```
+
+2. 首次使用时在设置中保存 DeepSeek 模型与密钥。已有设置时直接进入工作台。为验证安装版自带资源，使用“选择项目”选到下面目录；也可以在设置诊断中找到用户数据目录后定位 projects/demo_project。不要删除或移动正在使用的源码仓库。
+
+```powershell
+Join-Path $env:APPDATA 'learn-agent-desktop\projects\demo_project'
+```
+
+3. 查看设置诊断：packaged=true、version=0.1.0、pythonExists=true，日志目录在用户数据目录。保持 Key 为空保存并重启，应继续可用。新建会话发送：
+
+```text
+读取 main.py，用 run_command 运行 python -m unittest -v test_stats.py，再用 run_python 运行 main.py。只检查现有代码，不创建或修改文件，简要报告真实结果。
+```
+
+4. 两次运行分别确认。应看到四项测试通过，入口 total=42、average=14.0，最终 completed / stop、会话已保存。关闭应用，再从开始菜单打开，确认最近项目和历史正常，旧工具没有重放。
+5. 在另一台没有开发环境的 Windows 10/11 x64 电脑或虚拟机上，只复制安装器并重复上述步骤。这一步仍待真实验收；本机移除子进程开发路径的测试不能等同于干净机器。
+6. 完成后可从 Windows 已安装应用卸载 learn-agent，检查程序退出、安装目录中的应用被移除，用户数据与项目仍在。再安装应恢复设置和历史。
+
+本地验证：482 项 Python、35 项桌面 Node、26 项前端测试通过；安装包自带运行时的端到端测试通过，实际四项测试与入口 42/14.0 正确，两次审批与会话恢复均通过，模型回复固定，未请求 DeepSeek。已在中文且含空格的临时安装路径检查原生设置和工作台，使用独立测试配置，未改动已有密钥或项目；无模型环境变量重开后配置恢复正常。最终安装器在该目录安装成功，3181 项清单资源无缺失或哈希差异；静默卸载退出码 0，应用与安装记录移除，测试配置、项目和原有设置保留。安装版真实 DeepSeek 与干净机器结果待使用者反馈。本次只实现构建与安装，不写文章。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+npm.cmd test --prefix .\desktop
+npm.cmd run test:package --prefix .\desktop
+```
+
 ## 首次使用与桌面设置
 
 第 48 课已由使用者验收。第 49 课加入独立的本地设置窗口：首次选择项目、填写模型、保存加密密钥；工作台中的设置可在任务结束后再次打开。保存设置后重启本地后端，历史继续保留。模型仍使用 DeepSeek 官方 API，不提供任意服务地址输入。
@@ -113,7 +187,7 @@ Windows 下 safeStorage 使用 DPAPI 保护加密密钥，保护磁盘上的保�
 
 诊断显示运行版本、Python 是否存在、模型、项目、密钥来源、设置路径、固定日志目录与最近启动错误；不返回密钥或密文，也不提供上传按钮。不要贴出设置文件或含本地访问令牌的 .desktop-server.json 原文；核验只需报告状态。
 
-本节新增 13 项设置测试，桌面共 33 项、前端 26 项、相关 Python 网页 11 项通过；完整 Python 上次为 482 项通过。原生 Electron 已检查首次沿用环境变量保存、密码框不回显、诊断、取消选择和空密钥保存重启。实际 Windows 异步加解密恢复结果一致，配置文件无测试密钥明文；项目切换后不带模型环境变量或项目参数重开，仍从本机配置启动最近项目并保留历史，没有重放任务。独立临时项目的固定模型回复任务已实际运行四项测试和入口，输出 42/14.0，completed / stop、会话保存；这些是本地检查，真实 DeepSeek 联合验收待反馈。本节不写文章，第九篇仍待桌面构建与分发里程碑后单独安排。
+本节新增 13 项设置测试，桌面共 33 项、前端 26 项、相关 Python 网页 11 项通过；完整 Python 上次为 482 项通过。原生 Electron 已检查首次沿用环境变量保存、密码框不回显、诊断、取消选择和空密钥保存重启。实际 Windows 异步加解密恢复结果一致，配置文件无测试密钥明文；项目切换后不带模型环境变量或项目参数重开，仍从本机配置启动最近项目并保留历史，没有重放任务。独立临时项目的固定模型回复任务已实际运行四项测试和入口，输出 42/14.0，completed / stop、会话保存；以上为当时的本地检查；使用者随后完成真实 DeepSeek 联合验收，首次设置、saved 密钥、空密钥重启、两次审批、四项测试、入口 42/14.0、保存与重开恢复均正常。本节不写文章，第九篇仍待桌面构建与分发里程碑后单独安排。
 
 ```powershell
 Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
@@ -126,7 +200,7 @@ node --test .\tests\test_web_client.mjs
 
 第 47 课桌面联合验收已由使用者完成：目录选择、取消和提示正确，两次运行分别确认，四项测试通过，入口 total=42、average=14.0，completed / stop，会话保存和重开历史正常。第 48 课让桌面主进程管理自己的 Python 后端，启动窗口前确认服务身份，切换项目时更换后端，关闭窗口时取消任务并等待保存。
 
-当前仍是源码开发模式，需要已有 `.venv`、Python 依赖与桌面依赖，尚未制作安装包。开发环境使用 Python 3.13.9、Node.js 24.16.0、Electron 45.0.0；Node.js 最低 22.12.0。
+以下命令用于源码开发模式，需要已有 `.venv`、Python 依赖与桌面依赖。Windows 安装版使用前文构建与安装流程。开发环境使用 Python 3.13.9、Node.js 24.16.0、Electron 45.0.0；Node.js 最低 22.12.0。
 
 在一个终端启动即可，不必先启动 api.py：
 

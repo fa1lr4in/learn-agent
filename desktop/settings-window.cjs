@@ -2,7 +2,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
-function createSettingsWindow(electron, { parent, settings, save, theme, diagnostics, closed, notice = "" }) {
+function createSettingsWindow(electron, { parent, settings, save, theme, diagnostics, closed, notice = "",
+  logDirectory = path.join(__dirname, "..", "logs") }) {
   const { BrowserWindow, ipcMain, dialog, shell } = electron;
   const file = path.join(__dirname, "settings.html"), origin = pathToFileURL(file).href;
   const win = new BrowserWindow({ title: "learn-agent · 设置", width: 680, height: 760, minWidth: 560, minHeight: 600,
@@ -25,9 +26,9 @@ function createSettingsWindow(electron, { parent, settings, save, theme, diagnos
     },
     save: async input => { await save(input); if (!win.isDestroyed()) win.close(); },
     logs: async () => {
-      const folder = path.join(__dirname, "..", "logs");
+      const folder = logDirectory;
       fs.mkdirSync(folder, { recursive: true });
-      if (await shell.openPath(folder)) throw new Error("无法打开日志目录，请在项目根目录查看 logs。");
+      if (await shell.openPath(folder)) throw new Error("无法打开日志目录，请查看诊断中的日志路径。");
     },
     diagnostics,
     cancel: () => win.close()

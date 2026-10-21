@@ -29,15 +29,19 @@ async function checkBackend(info, fetcher = fetch) {
 }
 
 class Backend {
-  constructor({ root = path.join(__dirname, ".."), env = process.env, startupMs = 20000, shutdownMs = 15000,
+  constructor({ root = path.join(__dirname, ".."), python, logDirectory = path.join(root, "logs"),
+                env = process.env, startupMs = 20000, shutdownMs = 15000,
                 onUnexpectedExit = () => {} } = {}) {
     this.root = root;
-    this.env = env;
+    this.python = python || path.join(root, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    this.env = { ...env };
+    for (const name of ["PYTHONHOME", "PYTHONPATH", "PYTHONUSERBASE"]) delete this.env[name];
+    this.logDirectory = logDirectory;
     this.startupMs = startupMs;
     this.shutdownMs = shutdownMs;
     this.onUnexpectedExit = onUnexpectedExit;
-    this.record = path.join(root, "logs", ".desktop-server.json");
-    this.diagnostics = path.join(root, "logs", ".desktop-error.log");
+    this.record = path.join(logDirectory, ".desktop-server.json");
+    this.diagnostics = path.join(logDirectory, ".desktop-error.log");
     this.stderr = "";
     this.stopping = null;
   }
@@ -55,11 +59,10 @@ class Backend {
     if (this.child) throw new Error("此后端实例已启动。");
     const project = fs.realpathSync(workspace);
     if (!fs.statSync(project).isDirectory()) throw new Error("项目目录不存在或不是目录。");
-    const python = path.join(this.root, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-    if (!fs.existsSync(python)) throw new Error("找不到项目 .venv 中的 Python，请先按 README 创建开发环境。");
+    if (!fs.existsSync(this.python)) throw new Error("找不到 Python 运行时；源码版请创建 .venv，安装版请重新安装应用。");
     const instanceId = randomUUID();
-    const child = spawn(python, ["-B", "-X", "utf8", path.join(this.root, "api.py"),
-      "--workspace", project, "--port", "0", "--managed", "--instance-id", instanceId], {
+    const child = spawn(this.python, ["-E", "-s", "-B", "-X", "utf8", path.join(this.root, "api.py"),
+      "--workspace", project, "--log-dir", this.logDirectory, "--port", "0", "--managed", "--instance-id", instanceId], {
       cwd: this.root, env: this.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32"
     });
@@ -110,7 +113,7 @@ class Backend {
     } catch (error) {
       await this.stop();
       this.diagnose(error.message);
-      throw new Error(`${error.message} 请检查 DEEPSEEK_API_KEY、Python 依赖和 logs/.desktop-error.log。`);
+      throw new Error(`${error.message} 请在设置中检查模型密钥，并查看日志目录中的 .desktop-error.log。`);
     }
   }
 

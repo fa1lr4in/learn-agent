@@ -3,6 +3,7 @@ const path = require("node:path");
 const { Backend, sameDirectory } = require("./backend.cjs");
 const { Settings } = require("./settings.cjs");
 const { createSettingsWindow } = require("./settings-window.cjs");
+const { runtimePaths, prepareDemo } = require("./runtime.cjs");
 
 function authorizeFrame(event, win, info) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
@@ -77,12 +78,12 @@ function startDesktop(electron) {
   let backend, win, settingsWindow, settings, themes;
   let quitting = false, canQuit = false, changing = false, switching = Promise.resolve();
   const info = {};
-  const root = path.join(__dirname, "..");
+  const paths = runtimePaths(app);
   const fail = error => {
     if (!quitting) dialog.showErrorBox("learn-agent 本地服务异常", error.message);
     app.quit();
   };
-  const newBackend = () => new Backend({ root, env: settings.environment(),
+  const newBackend = () => new Backend({ ...paths, env: settings.environment(),
     onUnexpectedExit: () => fail(new Error("Python 后端意外退出。请查看 logs/.desktop-error.log，再重新打开应用；任务不会自动重放。")) });
   const assertIdle = async () => {
     if (!backend?.info || backend.exited) return;
@@ -115,16 +116,17 @@ function startDesktop(electron) {
   const showSettings = (notice = "") => {
     if (settingsWindow) { settingsWindow.focus(); return; }
     const created = createSettingsWindow(electron, {
-      parent: win, settings, theme: themes.value, notice,
+      parent: win, settings, theme: themes.value, notice, logDirectory: paths.logDirectory,
       save: input => change(async () => { await settings.save(input); await restartBackend(settings.data.workspace); }),
       diagnostics: () => {
         let latestError = "";
-        try { latestError = fs.readFileSync(path.join(root, "logs", ".desktop-error.log"), "utf8").slice(-6000); }
+        try { latestError = fs.readFileSync(path.join(paths.logDirectory, ".desktop-error.log"), "utf8").slice(-6000); }
         catch (error) { if (error.code !== "ENOENT") latestError = "无法读取启动诊断文件。"; }
         return { electron: process.versions.electron, node: process.versions.node, ...settings.view(),
+          packaged: Boolean(app.isPackaged), version: app.getVersion?.(),
           backendRunning: Boolean(backend?.info && !backend.exited),
-          pythonExists: fs.existsSync(path.join(root, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python")),
-          settingsFile: settings.file, logDirectory: path.join(root, "logs"), latestError: settings.redact(latestError) };
+          pythonExists: fs.existsSync(paths.python),
+          settingsFile: settings.file, logDirectory: paths.logDirectory, latestError: settings.redact(latestError) };
       },
       closed: () => { settingsWindow = null; if (!win || !backend?.info || backend.exited) app.quit(); }
     });
@@ -159,8 +161,9 @@ function startDesktop(electron) {
     const workspaceArg = process.argv.indexOf("--workspace");
     const override = workspaceArg < 0 ? undefined : process.argv[workspaceArg + 1];
     if (workspaceArg >= 0 && !override) throw new Error("--workspace 后需要提供项目目录。");
+    prepareDemo(paths);
     settings = await new Settings(app.getPath("userData"), electron.safeStorage,
-      { workspace: path.join(root, "workspace", "demo_project") }).load(override && path.resolve(override));
+      { workspace: paths.workspace }).load(override && path.resolve(override));
     const themeFile = path.join(app.getPath("userData"), "theme.json");
     themes = { value: "system", save(value) {
       fs.writeFileSync(themeFile, JSON.stringify({ theme: value })); this.value = value;

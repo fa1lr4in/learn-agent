@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000, help="监听端口；0 表示由系统分配")
     parser.add_argument("--managed", action="store_true", help="由桌面父进程管理；标准输入关闭时收尾退出")
     parser.add_argument("--instance-id", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--log-dir", type=Path, default=LOG_DIR, help="日志和会话数据库目录")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error("port 必须在 0 至 65535 之间。")
@@ -32,7 +33,8 @@ def main() -> None:
     if not key:
         raise SystemExit("后端没有读取到 DEEPSEEK_API_KEY；请在配置该环境变量的终端启动。不要将模型密钥发送给 API。")
     token = secrets.token_urlsafe(32)
-    info_path = LOG_DIR / ".api-server.json"
+    log_dir = args.log_dir.resolve()
+    info_path = log_dir / ".api-server.json"
     instance_id = args.instance_id or uuid4().hex
     # Bind before writing launch information, so a busy port cannot impersonate this instance.
     with socket.socket() as listener:
@@ -43,7 +45,7 @@ def main() -> None:
             raise SystemExit(f"无法监听 127.0.0.1:{args.port}（{type(error).__name__}）；请先检查端口占用。") from None
         port = listener.getsockname()[1] if args.port == 0 else args.port
         try:
-            app = create_app(args.workspace, LOG_DIR, key, token, port=port, instance_id=instance_id)
+            app = create_app(args.workspace, log_dir, key, token, port=port, instance_id=instance_id)
         except (OSError, ValueError) as error:
             raise SystemExit(f"无法启动后端：{error}") from None
         info = {"url": f"http://127.0.0.1:{port}", "token": token,

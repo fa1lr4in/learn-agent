@@ -214,6 +214,7 @@ test("first-use save starts the backend, and an unfinished task blocks configura
     require(name) {
       if (name === "./backend.cjs") return { Backend };
       if (name === "./settings.cjs") return { Settings: Store };
+      if (name === "./runtime.cjs") return require("../desktop/runtime.cjs");
       if (name === "./settings-window.cjs") return { createSettingsWindow(_electron, options) {
         setup = options; return { win: new Window(), loaded: Promise.resolve() };
       } };
