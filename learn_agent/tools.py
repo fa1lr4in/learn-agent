@@ -149,24 +149,14 @@ def apply_edit(path: str, original: bytes, updated: bytes) -> None:
     checkpoints.apply_change(target, updated, lambda: target.write_bytes(updated))
 
 
-def run_python(path: str) -> subprocess.CompletedProcess[str]:
-    """Run a workspace script from its own directory with a timeout."""
+def run_python(path: str) -> dict:
+    """Run a script with the command runner's output and process-tree limits."""
     target = resolve_python_path(path)
     if not target.is_file():
         raise FileNotFoundError(f"{path} 不存在或不是普通文件。")
-    child_env = os.environ.copy()
-    child_env.pop("DEEPSEEK_API_KEY", None)
-    return subprocess.run(
-        [sys.executable, "-E", "-s", "-B", "-X", "utf8", str(target)],
-        cwd=target.parent,
-        env=child_env,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=RUN_TIMEOUT,
-    )
+    directory = target.parent.relative_to(resolve_workspace_path(".")).as_posix()
+    result = commands.run_command([sys.executable, "-E", "-s", "-B", "-X", "utf8", str(target)], directory, RUN_TIMEOUT)
+    return {**result, "path": path}
 
 
 @dataclass(frozen=True)
@@ -268,13 +258,7 @@ def _prepare_edit(arguments: dict) -> PreparedTool:
 
 def _prepare_run(arguments: dict) -> PreparedTool:
     path = arguments["path"]
-
-    def execute() -> dict:
-        completed = run_python(path)
-        return {"ok": completed.returncode == 0, "path": path, "exit_code": completed.returncode,
-                "stdout": completed.stdout, "stderr": completed.stderr}
-
-    return PreparedTool(f"运行 {path}（最长 {RUN_TIMEOUT} 秒）", execute)
+    return PreparedTool(f"运行 {path}（最长 {RUN_TIMEOUT} 秒）", lambda: run_python(path))
 
 
 def _prepare_command(arguments: dict) -> PreparedTool:
@@ -417,7 +401,7 @@ register_tool(Tool(
         "type": "function",
         "function": {
             "name": "run_python",
-            "description": "经用户确认后运行 workspace 内的普通 .py 文件，以脚本所在目录为工作目录，支持导入同项目模块；返回退出码、标准输出和标准错误，最长运行 10 秒。",
+            "description": "经用户确认后运行 workspace 内的普通 .py 文件，以脚本所在目录为工作目录，支持导入同项目模块。最长 10 秒，每个输出流上限 16 KiB；返回退出码、stdout、stderr、超时与截断标记，非零退出、超时或输出超限时 ok 为 false。超时或输出超限时请求清理仍在运行的进程树；cleanup_succeeded 为 false 时停止后续操作。运行不使用操作系统沙箱，脚本仍可使用当前账户的权限。",
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "相对当前 workspace 的 .py 文件路径；根目录的脚本用 main.py，src 子目录的脚本用 src/main.py，不要自动添加根目录名称作为前缀"}},

@@ -81,7 +81,7 @@ class WorkspaceTests(unittest.TestCase):
                 tools.list_files("external.py")
             with self.assertRaises(ValueError):
                 tools.write_file("external.py", "overwritten")
-            with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+            with patch("learn_agent.commands.subprocess.Popen") as process, self.assertRaises(ValueError):
                 tools.run_python("external.py")
             process.assert_not_called()
             self.assertEqual(tools.list_files(), ["demo/"])
@@ -209,9 +209,9 @@ class WorkspaceTests(unittest.TestCase):
         tools.write_file("demo/main.py", 'from pathlib import Path\nfrom src.stats import summarize\n'
                              'print(Path("input.txt").read_text(encoding="utf-8"))\nprint(summarize([12, 18, 30]))\n')
         result = tools.run_python("demo/main.py")
-        self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.splitlines(), ["项目本地资料", "{'total': 60}"])
-        self.assertEqual(result.stderr, "")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["stdout"].splitlines(), ["项目本地资料", "{'total': 60}"])
+        self.assertEqual(result["stderr"], "")
 
     def test_read_only_fixtures_cannot_be_overwritten_before_confirmation(self):
         for path in (*permissions.READ_ONLY_FILES, "demo_project/./test_stats.py"):
@@ -232,7 +232,7 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(tool=name):
                 log_file = io.StringIO()
                 reply = self.response([("call_denied", name, arguments)])
-                with patch("learn_agent.providers.call_model", return_value=reply) as model, patch("learn_agent.tools.subprocess.run") as process:
+                with patch("learn_agent.providers.call_model", return_value=reply) as model, patch("learn_agent.commands.subprocess.Popen") as process:
                     with patch("builtins.input", return_value="n") as approval, contextlib.redirect_stdout(io.StringIO()):
                         reason = loop.run_agent(self.payload, "offline-placeholder", log_file, auto_read=True)
                 self.assertEqual(reason, "user_denied")

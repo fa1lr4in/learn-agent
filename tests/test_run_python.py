@@ -122,9 +122,9 @@ class RunPythonTests(unittest.TestCase):
         fixed_code = broken_code.replace("range(1, n)", "range(1, n + 1)")
         tools.write_file("main.py", broken_code)
         ordinary_run = tools.run_python("main.py")
-        self.assertEqual(ordinary_run.returncode, 0)
-        self.assertEqual(ordinary_run.stdout.strip(), "4950")
-        self.assertEqual(ordinary_run.stderr, "")
+        self.assertEqual(ordinary_run["exit_code"], 0)
+        self.assertEqual(ordinary_run["stdout"].strip(), "4950")
+        self.assertEqual(ordinary_run["stderr"], "")
         responses = []
         for call_id, name, arguments in [
             ("call_write_broken", "write_file", {"path": "main.py", "content": broken_code}),
@@ -266,9 +266,9 @@ class RunPythonTests(unittest.TestCase):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "offline-sensitive-test-key"}):
             completed = tools.run_python("main.py")
             self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "offline-sensitive-test-key")
-        self.assertEqual(completed.returncode, 0)
-        self.assertEqual(completed.stdout.splitlines(), ["练习资料", "False"])
-        self.assertEqual(completed.stderr, "")
+        self.assertEqual(completed["exit_code"], 0)
+        self.assertEqual(completed["stdout"].splitlines(), ["练习资料", "False"])
+        self.assertEqual(completed["stderr"], "")
 
     def test_same_reply_can_write_then_run_with_separate_results(self):
         self.response["choices"][0]["message"]["tool_calls"].insert(0, {
@@ -304,7 +304,7 @@ class RunPythonTests(unittest.TestCase):
 
     def test_timeout_terminates_child_and_returns_tool_error(self):
         tools.write_file("main.py", "import time\ntime.sleep(30)\n")
-        with patch.object(tools, "RUN_TIMEOUT", 0.3), patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
+        with patch.object(tools, "RUN_TIMEOUT", 1), patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
             with patch("builtins.input", return_value="y"), contextlib.redirect_stdout(io.StringIO()):
                 reason = loop.run_agent(self.payload, "offline-placeholder")
         self.assertEqual(reason, "stop")
@@ -312,11 +312,13 @@ class RunPythonTests(unittest.TestCase):
         result = json.loads(model.call_args_list[-1].args[0]["messages"][-1]["content"])
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["type"], "TimeoutExpired")
-        self.assertNotIn("exit_code", result)
+        self.assertTrue(result["timed_out"])
+        self.assertTrue(result["cleanup_succeeded"])
+        self.assertNotEqual(result["exit_code"], 0)
 
     def test_missing_script_does_not_start_process(self):
         with patch("learn_agent.providers.call_model", side_effect=[self.response, self.final]) as model:
-            with patch("learn_agent.tools.subprocess.run") as process, patch("builtins.input", return_value="y"):
+            with patch("learn_agent.commands.subprocess.Popen") as process, patch("builtins.input", return_value="y"):
                 with contextlib.redirect_stdout(io.StringIO()):
                     loop.run_agent(self.payload, "offline-placeholder")
         process.assert_not_called()
@@ -329,18 +331,18 @@ class RunPythonTests(unittest.TestCase):
         for arguments in [{}, {"path": "../chat.py"}, {"path": "report.md"}, {"path": "main.py", "args": ["-c", "print(1)"]}]:
             with self.subTest(arguments=arguments):
                 self.response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = json.dumps(arguments)
-                with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.tools.subprocess.run") as process:
+                with patch("learn_agent.providers.call_model", return_value=self.response), patch("learn_agent.commands.subprocess.Popen") as process:
                     with patch("builtins.input") as approval, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(ValueError):
                         loop.run_agent(self.payload, "offline-placeholder", auto_read=True)
                 approval.assert_not_called()
                 process.assert_not_called()
-        with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+        with patch("learn_agent.commands.subprocess.Popen") as process, self.assertRaises(ValueError):
             tools.run_python("../chat.py")
         process.assert_not_called()
 
     def test_runner_rejects_symbolic_link(self):
         with patch.object(Path, "is_symlink", return_value=True):
-            with patch("learn_agent.tools.subprocess.run") as process, self.assertRaises(ValueError):
+            with patch("learn_agent.commands.subprocess.Popen") as process, self.assertRaises(ValueError):
                 tools.run_python("main.py")
         process.assert_not_called()
 
