@@ -6,11 +6,13 @@
 
 ## v1.0 发布准备
 
-第 53 课三题各三次的真实 CLI 候选评测已验收。第 54 课把后续源码修复整合为 1.0.0 Windows x64 本地安装包；当前尚未公开 GitHub Release，安装版真实模型与独立干净机器验收仍待完成。版本号不代表所有 Agent 能力已实现。
+第 53 课三题各三次的真实 CLI 候选评测已验收。第 54 课把后续源码修复整合为 1.0.0 Windows x64 本地安装包，本机真实 DeepSeek 安装版验收已通过；当前尚未公开 GitHub Release，干净来宾 Windows 验收仍待完成。版本号不代表所有 Agent 能力已实现。
 
 本次只改发布相关内容：desktop/package.json 与锁文件更新版本；scripts/build_windows.py 在清单中记录 Git 提交、构建输入文件哈希及总指纹，拒绝未提交输入并核对构建期间来源未变；安装包附带 CHANGELOG.md、SECURITY.md 与第三方声明。tests/test_windows_build.py 检查来源记录和本地资料排除，test_windows_package.cjs 核对实际资源、版本和来源指纹。模型与工具循环没有变化，也不重新调用付费 API 跑候选评测。
 
-本地已完成：504 项 Python、36 项桌面、26 项前端检查通过；安装器构建成功，3184 项清单资源哈希与版本、来源指纹全部一致。将分发资源复制到含中文和空格的临时目录，限制开发路径后，自带 Python 真实运行四项测试通过、入口 42/14.0，两次执行分别审批，停止后重启可恢复历史；模型使用固定回复，未调用 API。安装版真实 DeepSeek、拒绝/停止交互与独立干净 Windows 仍按下文单独验收。构建源码为 454058e3356c38c76612982edfa97a46f9d59996，对应 [Windows CI 已通过](https://github.com/fa1lr4in/learn-agent/actions/runs/39746425464)。
+本地已完成：504 项 Python、36 项桌面、26 项前端检查通过；安装器构建成功，3184 项清单资源哈希与版本、来源指纹全部一致。将分发资源复制到含中文和空格的临时目录，限制开发路径后，自带 Python 真实运行四项测试通过、入口 42/14.0，两次执行分别审批，停止后重启可恢复历史；这部分模型使用固定回复，未调用 API。构建源码为 454058e3356c38c76612982edfa97a46f9d59996，对应 [Windows CI 已通过](https://github.com/fa1lr4in/learn-agent/actions/runs/39746425464)。
+
+使用者随后完成真实 DeepSeek 安装版验收：packaged=true、version=1.0.0，主任务 5 次请求、15006 token；edit_file 恰好替换 1 处，编辑和两次执行分别人工批准，四项测试通过，入口 total=48、average=16.0，最终 completed / stop。重开同一会话续聊 1 次请求、3750 token，没有工具调用；拒绝为 cancelled / user_denied、2454 token，停止为 cancelled / cancelled、2470 token，两者均无 tool_started 与 tool_result。四次任务共 8 次请求，输入 23043、输出 637、合计 23680 token，逐轮用量、JSONL、SQLite、文件检查点与实际 main.py 一致；安装目录的 3184 项资源与构建清单一致。实际选择的是已有 workspace/demo_project，业务文件本来已存在本地修改，未将它当作干净新项目；本轮检查点只记录 main.py 的 [7,14,21] 到 [8,16,24]。独立使用安装版自带 Python 复跑四项测试通过，核验未改变项目文件，也未增加模型请求。
 
 构建输入仅限程序、构建配置、固定依赖和发行文档。workspace、公众号文章、logs、.venv 和本机密钥不进入包；这些本地资料存在未提交修改时，不阻止构建。构建前先提交实际程序与发行说明，再运行：
 
@@ -55,6 +57,18 @@ Start-Process -FilePath $releaseInstaller
 再新建会话发送“只用 run_python 运行 main.py，不读取或修改任何文件”，在确认处拒绝：应无执行结果，文件不变。另开一次相同任务，在审批处点击停止：应 cancelled，关闭重开后没有自行执行。拒绝与停止各使用独立新会话。
 
 独立干净 Windows 10/11 x64 电脑或虚拟机上，只复制安装器与校验文件；使用安装版首次准备的 projects/demo_project（默认在 %APPDATA%\learn-agent-desktop 下）重复任务，不依赖源码、Node.js、系统 Python 或 .venv。干净环境结果单独记录，不能用本机临时目录检查替代。
+
+当前选择 Windows 沙盒作为干净来宾环境。已只读检查本机 Windows 11 企业版 LTSC 24H2 x64、约 64 GB 内存、固件虚拟化已开启、HypervisorPresent=true；Windows 沙盒组件 Containers-DisposableClientVM 存在，但 Win32_OptionalFeature.InstallState=2（禁用）。当前进程非管理员，尚未启用组件或重启，也未将沙盒标为验收通过。沙盒可以验证不依赖宿主开发环境，另一台实体电脑的兼容性仍需单独记录。
+
+启用会修改系统组件，需要在管理员 PowerShell 中执行下面命令；-NoRestart 不自动重启。若结果要求重启，先保存当前工作再手动重启。参见 [微软安装说明](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install)。
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName 'Containers-DisposableClientVM' -All -NoRestart -ErrorAction Stop
+Get-WindowsOptionalFeature -Online -FeatureName 'Containers-DisposableClientVM' |
+    Select-Object FeatureName, State
+```
+
+重启后从开始菜单打开“Windows 沙盒”，确认可以进入新的 Windows 桌面，再继续安装与真实任务。不要在沙盒里安装 Node.js、Python 或复制源码、本机配置和密钥文件；模型密钥只在来宾的设置界面输入。关闭整个沙盒会清空其数据，应用重开与历史恢复需要在同一次沙盒窗口存续期间检查，证据在关闭沙盒前导出。参见 [微软沙盒说明](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/)。
 
 公开发布前确认最终安装包真实验收、干净机器结果及对应源码 CI；再为确定的源码提交创建 v1.0.0 标签和 GitHub Release，附安装器、SHA256SUMS.txt、使用说明、实际验证范围与已知限制。当前不创建公开 Release，不写公众号。
 
