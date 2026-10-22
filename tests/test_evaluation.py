@@ -69,13 +69,13 @@ class EvaluationTests(unittest.TestCase):
                 return 1
         return 0
 
-    def run_suite(self, label="test", repeat=1, max_model_calls=8, baseline=None, answer="y"):
+    def run_suite(self, label="test", repeat=1, max_model_calls=8, baseline=None, answer="y", release_candidate=False):
         with patch.object(evaluation, "LOG_DIR", self.logs), patch.object(tool_call, "LOG_DIR", self.logs), \
                 patch.object(evaluation, "launch_agent", side_effect=self.launch) as launch, \
                 patch("tool_call.get_api_key", return_value="offline-placeholder"), \
                 patch("learn_agent.providers.call_model", side_effect=self.model), \
                 patch("builtins.input", return_value=answer) as approval, contextlib.redirect_stdout(io.StringIO()):
-            path, report = evaluation.run_suite(label, repeat, max_model_calls, baseline)
+            path, report = evaluation.run_suite(label, repeat, max_model_calls, baseline, release_candidate)
         return path, report, launch, approval
 
     def workspace(self, case_id):
@@ -264,6 +264,131 @@ class EvaluationTests(unittest.TestCase):
         with patch.dict(os.environ,{"DEEPSEEK_API_KEY":"offline-placeholder"}):
             checks, acceptance=evaluation.grade(case,root,before,self.entries(case),self.grader)
         self.assertTrue(acceptance["ok"],acceptance)
+
+    def test_candidate_requires_explicit_repetition_before_any_task(self):
+        with patch.object(evaluation, "launch_agent") as launch, self.assertRaisesRegex(ValueError, "至少为 3"):
+            evaluation.run_suite("candidate", release_candidate=True)
+        launch.assert_not_called()
+        self.assertFalse(self.logs.exists())
+
+    def test_candidate_nine_tasks_have_consistent_per_task_totals_and_source_gate(self):
+        path, report, launch, approval = self.run_suite(repeat=3, release_candidate=True)
+        self.assertEqual((launch.call_count, approval.call_count), (9, 18))
+        summary = report["summary"]
+        self.assertEqual((summary["planned"], summary["passed"], summary["model_calls"]), (9, 9, 30))
+        self.assertEqual(summary["usage"], {"prompt_tokens": 2400, "completion_tokens": 600, "total_tokens": 3000})
+        self.assertEqual(summary["failure_counts"], {})
+        self.assertEqual(sum(g["total_tokens"] for g in summary["by_task"].values()), 3000)
+        self.assertEqual(sum(g["model_calls"] for g in summary["by_task"].values()), 30)
+        self.assertTrue(all(g["passed"] == 3 for g in summary["by_task"].values()))
+        self.assertEqual(summary["by_task"]["read_facts"]["total_tokens"], 600)
+        self.assertTrue(all(row["failure_category"] is None for row in report["runs"]))
+        report.update(code_dirty=True, git_head="offline-test-commit")
+        evaluation.save_report(report, path.parent)
+        self.assertFalse(report["release_checks"]["passed"])
+        self.assertFalse(report["release_checks"]["checks"]["clean_source"])
+        report["code_dirty"] = False
+        evaluation.save_report(report, path.parent)
+        self.assertTrue(report["release_checks"]["passed"])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), report)
+        self.assertIn("## 分题统计", path.with_suffix(".md").read_text(encoding="utf-8"))
+
+    def test_candidate_budget_failures_remain_in_denominator_and_failure_counts(self):
+        _, report, launch, approval = self.run_suite(repeat=3, max_model_calls=1, release_candidate=True)
+        approval.assert_not_called()
+        self.assertEqual(launch.call_count, 9)
+        self.assertEqual(report["summary"]["failure_counts"], {"max_model_calls": 9})
+        self.assertEqual(report["summary"]["usage"]["total_tokens"], 900)
+        self.assertEqual(report["summary"]["success_rate"], 0.0)
+        self.assertFalse(report["release_checks"]["passed"])
+
+    def test_failure_categories_do_not_turn_recovered_errors_into_failed_tasks(self):
+        examples = [({"passed": True, "reason": "stop"}, None),
+                    ({"passed": False, "reason": "abnormal_finish"}, "model_output_incomplete"),
+                    ({"passed": False, "reason": "error"}, "runtime_error"),
+                    ({"passed": False, "reason": "stop", "checks": {"unchanged_other_files": False}}, "scope_violation"),
+                    ({"passed": False, "reason": "stop", "checks": {"fixed_acceptance": False}}, "acceptance_failed"),
+                    ({"passed": False, "reason": "error", "error": "missing log"}, "evaluation_error"),
+                    ({"passed": False, "reason": "error", "cleanup_unconfirmed": True}, "cleanup_unconfirmed")]
+        examples += [({"passed": False, "reason": reason}, reason) for reason in
+                     ("cancelled", "user_denied", "policy_denied", "max_model_calls", "max_total_tokens", "context_limit")]
+        for row, expected in examples:
+            with self.subTest(row=row):
+                self.assertEqual(evaluation.failure_category(row), expected)
+
+    def test_per_task_unknown_usage_does_not_become_zero(self):
+        rows = [{"task_id": "read_facts", "passed": True, "reason": "stop", "agent_seconds": 1.0,
+                 "model_calls": 2, "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+                {"task_id": "read_facts", "passed": False, "reason": "error", "agent_seconds": 3.0,
+                 "usage": {}, "reported_usage": {"total_tokens": 7}}]
+        summary = evaluation.aggregate(rows, 3)
+        self.assertEqual(summary["success_rate"], 0.5)
+        self.assertFalse(summary["complete"])
+        self.assertEqual(summary["known_total_tokens"], 22)
+        self.assertIsNone(summary["usage"]["total_tokens"])
+        self.assertIsNone(summary["by_task"]["read_facts"]["total_tokens"])
+        self.assertIsNone(summary["model_calls"])
+        self.assertEqual(summary["by_task"]["read_facts"]["mean_agent_seconds"], 2.0)
+
+    def test_uncertain_agent_cleanup_stops_suite_without_starting_acceptance(self):
+        entries = [{"event": "run_end", "reason": "error"},
+                   {"event": "tool_result", "result": {"cleanup_succeeded": False}}]
+        entries.reverse()
+        with patch.object(evaluation, "find_run", return_value=(self.root / "run.jsonl", entries)), \
+                patch.object(evaluation, "grade") as grader:
+            _, report, launch, _ = self.run_suite()
+        launch.assert_called_once()
+        grader.assert_not_called()
+        self.assertEqual(report["summary"]["failure_counts"], {"cleanup_unconfirmed": 1})
+        self.assertFalse(report["summary"]["complete"])
+
+    def test_source_change_stops_before_first_model_call(self):
+        with patch.object(evaluation, "source_hash", side_effect=["original", "changed"]):
+            _, report, launch, _ = self.run_suite(repeat=3, release_candidate=True)
+        launch.assert_not_called()
+        self.assertFalse(report["source_unchanged"])
+        self.assertEqual(report["summary"]["attempted"], 1)
+        self.assertFalse(report["release_checks"]["passed"])
+
+    def test_source_change_after_task_preserves_actual_token_usage(self):
+        with patch.object(evaluation, "source_hash", side_effect=["original", "original", "changed"]):
+            _, report, launch, _ = self.run_suite(repeat=3, release_candidate=True)
+        launch.assert_called_once()
+        self.assertFalse(report["source_unchanged"])
+        self.assertEqual(report["summary"]["usage"]["total_tokens"], 200)
+        self.assertEqual(report["summary"]["failure_counts"], {"evaluation_error": 1})
+        self.assertFalse(report["summary"]["complete"])
+
+    def test_cancellation_after_grading_does_not_keep_a_passed_result(self):
+        with patch.object(evaluation, "source_hash", side_effect=["original", "original", "original", KeyboardInterrupt]):
+            _, report, launch, _ = self.run_suite(repeat=3, release_candidate=True)
+        launch.assert_called_once()
+        self.assertEqual(report["summary"]["passed"], 0)
+        self.assertEqual(report["summary"]["failure_counts"], {"cancelled": 1})
+        self.assertFalse(report["release_checks"]["passed"])
+
+    def test_source_fingerprint_covers_agent_code_and_dependency_lock(self):
+        repo = self.root / "source"
+        for name in ("tool_call.py", "eval.py", "requirements.txt", "desktop/requirements-windows.txt",
+                     "evals/cases.json", "evals/grade.py", "learn_agent/prompts.py"):
+            p = repo / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("original", encoding="utf-8")
+        with patch.object(evaluation, "REPO", repo):
+            before = evaluation.source_hash()
+            for name in ("learn_agent/prompts.py", "desktop/requirements-windows.txt"):
+                p = repo / name
+                p.write_text("changed", encoding="utf-8")
+                self.assertNotEqual(evaluation.source_hash(), before)
+                p.write_text("original", encoding="utf-8")
+            self.assertEqual(evaluation.source_hash(), before)
+
+    def test_candidate_cli_returns_nonzero_when_release_checks_fail(self):
+        with patch.object(sys, "argv", ["eval.py", "--label", "candidate", "--repeat", "3", "--release-candidate"]), \
+                patch.object(evaluation, "run_suite", return_value=(self.root / "report.json", {"release_checks": {"passed": False}})), \
+                self.assertRaises(SystemExit) as stopped:
+            evaluation.main()
+        self.assertEqual(stopped.exception.code, 1)
 
     @unittest.skipUnless(os.name == "nt", "Windows short path aliases")
     def test_find_run_matches_windows_short_workspace_path(self):

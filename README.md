@@ -1098,6 +1098,64 @@ python -B -X utf8 tool_call.py --status $permissionReadDeniedLog
 
 这是工具入口的权限策略，没有引入操作系统沙箱。只禁用某个工具不保证其他获准执行的程序无法产生相同副作用；需要将任务限制为内置只读工具时，应同时禁用 `write_file`、`edit_file`、`run_python` 和 `run_command`。文件正文也可能影响模型选择工具，但不能替终端输入 `y`、修改本次禁用名单，或放宽现有路径检查。
 
+## 发布候选版评测
+
+第 52 课已由使用者验收：新副本安装与依赖检查正常，无密钥预览不联网，源码桌面窗口正常，GitHub CI 为绿色。第 53 课复用原有三题及固定验收，不修改题目来配合模型；使用候选模式让每题独立重复三次，共九次任务。
+
+新增 `--release-candidate`，要求显式指定 `--repeat 3` 或更高。候选检查要求：完整执行全部题目、全部通过、三项 token 用量完整、相关源码无未提交变化且有 Git 提交、运行前后源码指纹一致。报告记录 CLI/内核/题目/验收器/依赖锁的指纹、模型名称、Python 版本和平台。这里检查的是三类 CLI 小项目，不代替安装版、独立干净机器、MCP 或任意项目能力验收；没有在本节更改安装版版本号。
+
+每次运行仍创建新的项目目录与会话。读取按 `--auto-read` 允许，修改和执行仍逐次确认；agent_seconds 统计 Agent 子进程耗时，包含人工确认等待，不含评测器随后执行的独立固定验收。源码或依赖锁变化时停止后续题目；工具或固定验收进程的清理未确认时也停止，不继续启动下一题。
+
+在原开发仓库执行；先退出其他任务，不在这组评测中修改 learn_agent、tool_call.py、eval.py、evals 或依赖文件。不要使用仍停留在旧提交的临时克隆副本。下面命令会产生真实 DeepSeek API 用量，默认每题最多八次模型请求；请逐项检查操作，确认预期修改和运行时输入 y，拒绝或 Ctrl+C 会保留部分报告并停止。
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+if (-not $env:DEEPSEEK_API_KEY) {
+    $env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
+}
+& .\.venv\Scripts\python.exe -m pip check
+if ($LASTEXITCODE -ne 0) { throw '请先修复依赖环境。' }
+
+New-Item -ItemType Directory -Path .\logs\evals -Force | Out-Null
+$beforeCandidateReports = @(Get-ChildItem -Path '.\logs\evals\eval-*\report.json' -File |
+    Select-Object -ExpandProperty FullName)
+
+& .\.venv\Scripts\python.exe -B -X utf8 eval.py --label 'rc-cli-01' --repeat 3 --max-model-calls 8 --release-candidate
+$candidateExitCode = $LASTEXITCODE
+Write-Host "候选评测退出码：$candidateExitCode（0 为候选检查通过，1 为未通过；报告仍保留）"
+
+$newCandidateReports = @(Get-ChildItem -Path '.\logs\evals\eval-*\report.json' -File |
+    Where-Object { $_.FullName -notin $beforeCandidateReports })
+if ($newCandidateReports.Count -ne 1) { throw '本次报告数量不符，请检查终端输出。' }
+$candidateReportPath = $newCandidateReports[0].FullName
+$candidate = Get-Content -LiteralPath $candidateReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+Write-Host "本次报告：$candidateReportPath"
+$candidate.runs | Select-Object task_id, repeat, passed, reason, failure_category, model_calls, agent_seconds |
+    Format-Table -AutoSize
+$candidate.summary | ConvertTo-Json -Depth 8
+$candidate.release_checks | ConvertTo-Json -Depth 5
+```
+
+预期共九条任务记录，每类三条；通过时 summary 为 planned=9、attempted=9、passed=9、failed=0，complete/usage_complete=true，release_checks.passed=true，退出码为 0。模型请求数、token 与耗时以本次实测为准，不写死为某个数。候选检查未通过时保留失败，先核对原因，不删除失败任务或只挑成功次数作为结果。修复阻塞问题后应使用新标签重新完整评测，并保留原报告。
+
+`summary.by_task` 展示每题的尝试数、通过数、成功率、请求数、总 token 和平均耗时；`summary.model_calls` 汇总全组请求；`failure_counts` 按任务的最终失败原因计数。成功率继续以实际尝试数为分母，提前取消时必须结合 complete 和 attempted/planned 阅读；候选检查不会把部分成功当成整组通过。
+
+| failure_category | 含义 |
+| --- | --- |
+| null | 任务通过；中途错误若已修复并通过验收，不计为失败 |
+| max_model_calls / max_total_tokens / context_limit / plan_incomplete / usage_unavailable | 请求、用量或上下文等条件导致暂停 |
+| user_denied / cancelled / policy_denied | 人工拒绝、中断或本地策略拒绝 |
+| model_output_incomplete | 模型输出截断等异常结束 |
+| runtime_error | Agent 异常结束；具体原因继续查看本次日志 |
+| scope_violation | 实际文件变化超出题目允许范围 |
+| acceptance_failed | 正常回答，但固定验收、执行证据或答案格式未满足 |
+| cleanup_unconfirmed | 工具或固定验收进程清理未确认，停止后续题目 |
+| evaluation_error | 日志匹配、源码变化或评测器自身异常；不可当作模型能力失败的结论 |
+
+JSONL、会话库、每次新项目和 JSON/Markdown 报告仍保存在 logs 中，不提交到 GitHub。原有不带 --release-candidate 的单次评测和预算对照继续可用，未通过的普通对照组仍正常保存报告。使用固定回复的本地测试不等于真实模型评测，真实九次结果待使用者运行后记录。
+
+本节新增 11 项回归，评测相关 31 项和完整 500 项 Python 检查通过，包含三题各三次的固定回复运行、分题与全组用量合计、失败保留、未知用量、源码变化前后停止、进程清理未确认和候选退出码。上述模型回复为测试替身，文件工具、子进程及独立固定验收真实执行，没有调用付费 API。
+
 ## 固定任务评测
 
 第 41 课用三道固定题目检验当前 Agent，成功标准在运行前确定：

@@ -8,6 +8,7 @@ import os
 import statistics
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -29,6 +30,24 @@ def load_suite():
     grader = (REPO / "evals" / "grade.py").read_text(encoding="utf-8")
     content = json.dumps({"suite": suite, "grader": grader, "scoring": SCORING_VERSION}, ensure_ascii=False, sort_keys=True)
     return suite["cases"], grader, hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def source_hash():
+    files = [REPO / name for name in ("tool_call.py", "eval.py", "requirements.txt", "desktop/requirements-windows.txt",
+                                     "evals/cases.json", "evals/grade.py")]
+    files += sorted((REPO / "learn_agent").rglob("*.py"))
+    hashes = {p.relative_to(REPO).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+    return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def check_source(report):
+    try:
+        unchanged = source_hash() == report["source_sha256"]
+    except OSError:
+        unchanged = False
+    report["source_unchanged"] &= unchanged
+    if not unchanged:
+        raise ValueError("评测期间源码或依赖锁发生变化，停止后续题目；本组不能作为同一版本的候选结果。")
 
 
 def snapshot(root):
@@ -115,16 +134,53 @@ def grade(case, workspace, before, entries, grader):
     return checks, acceptance
 
 
+def failure_category(row):
+    if row["passed"]:
+        return None
+    if row.get("cleanup_unconfirmed"):
+        return "cleanup_unconfirmed"
+    reason = row["reason"]
+    if reason in ("cancelled", "user_denied", "policy_denied"):
+        return reason
+    if reason in ("max_model_calls", "max_total_tokens", "context_limit", "plan_incomplete", "usage_unavailable"):
+        return reason
+    if row.get("error"):
+        return "evaluation_error"
+    if reason == "abnormal_finish":
+        return "model_output_incomplete"
+    if reason != "stop":
+        return "runtime_error"
+    if row.get("checks", {}).get("unchanged_other_files") is False:
+        return "scope_violation"
+    return "acceptance_failed"
+
+
+def sum_known(values):
+    return sum(values) if values and all(type(value) is int for value in values) else None
+
+
 def aggregate(rows, planned):
     usage = {key: sum(row["usage"].get(key) or 0 for row in rows)
              if rows and all(type(row["usage"].get(key)) is int for row in rows) else None for key in TOKEN_FIELDS}
-    return {"planned": planned, "attempted": len(rows), "passed": sum(row["passed"] for row in rows),
+    summary = {"planned": planned, "attempted": len(rows), "passed": sum(row["passed"] for row in rows),
             "failed": sum(not row["passed"] for row in rows),
             "complete": len(rows) == planned and not any(row["reason"] in ("cancelled", "user_denied") for row in rows),
             "success_rate": sum(row["passed"] for row in rows) / len(rows) if rows else None,
             "mean_agent_seconds": statistics.mean(row["agent_seconds"] for row in rows) if rows else None,
             "usage": usage, "known_total_tokens": sum(row.get("reported_usage", row["usage"]).get("total_tokens") or 0 for row in rows),
-            "usage_complete": all(value is not None for value in usage.values())}
+            "usage_complete": all(value is not None for value in usage.values()),
+            "model_calls": sum_known([row.get("model_calls") for row in rows]),
+            "failure_counts": dict(Counter(failure_category(row) for row in rows if not row["passed"])), "by_task": {}}
+    for task in sorted({row["task_id"] for row in rows}):
+        group = [row for row in rows if row["task_id"] == task]
+        summary["by_task"][task] = {
+            "attempted": len(group), "passed": sum(row["passed"] for row in group),
+            "success_rate": sum(row["passed"] for row in group) / len(group),
+            "mean_agent_seconds": statistics.mean(row["agent_seconds"] for row in group),
+            "model_calls": sum_known([row.get("model_calls") for row in group]),
+            "total_tokens": sum_known([row["usage"].get("total_tokens") for row in group]),
+        }
+    return summary
 
 
 def compare(report, baseline):
@@ -143,6 +199,14 @@ def compare(report, baseline):
 
 
 def save_report(report, folder):
+    if report["config"].get("release_candidate"):
+        summary = report["summary"]
+        checks = {"repeat_at_least_3": report["config"]["repeat"] >= 3,
+                  "complete": summary["complete"], "all_passed": summary["passed"] == summary["planned"],
+                  "usage_complete": summary["usage_complete"],
+                  "clean_source": report.get("code_dirty") is False and bool(report.get("git_head")),
+                  "source_unchanged": report["source_unchanged"]}
+        report["release_checks"] = {"passed": all(checks.values()), "checks": checks}
     (folder / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     summary = report["summary"]
     rate = f"{summary['success_rate']:.1%}" if summary["success_rate"] is not None else "未知"
@@ -152,11 +216,23 @@ def save_report(report, folder):
              "| 题目 | 重复 | 通过 | 原因 | Agent 秒数 | 总 token |", "| --- | --- | --- | --- | --- | --- |"]
     for row in report["runs"]:
         lines.append(f"| {row['task_id']} | {row['repeat']} | {row['passed']} | {row['reason']} | {row['agent_seconds']:.3f} | {row['usage'].get('total_tokens')} |")
+    lines += ["", "## 分题统计", "", "| 题目 | 尝试 | 通过 | 请求数 | 总 token | 平均 Agent 秒数 |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for task, data in summary["by_task"].items():
+        lines.append(f"| {task} | {data['attempted']} | {data['passed']} | {data['model_calls']} | {data['total_tokens']} | {data['mean_agent_seconds']:.3f} |")
+    lines += ["", "失败分类：`" + json.dumps(summary["failure_counts"], ensure_ascii=False) + "`。",
+              "", f"源码提交：`{report.get('git_head')}`；相关源码有未提交变化：`{report.get('code_dirty')}`。",
+              f"源码指纹：`{report.get('source_sha256')}`；运行环境：Python `{report.get('python_version')}` / `{report.get('platform')}`。"]
+    if report.get("release_checks"):
+        lines += ["", "## 候选检查", "", "```json", json.dumps(report["release_checks"], indent=2), "```",
+                  "", "此结果只覆盖本组三类 CLI 小项目；不代替桌面安装、干净机器、MCP 或任意项目能力验收。"]
     for row in report["runs"]:
         lines += ["", f"## {row['task_id']} / {row['repeat']}", "", f"工作目录：`{row['workspace']}`", f"日志：`{row['log']}`",
                   "", "```json", json.dumps(row["checks"], ensure_ascii=False, indent=2), "```"]
         if row.get("error"):
             lines += ["", row["error"]]
+        if row.get("failure_category"):
+            lines += ["", f"失败分类：`{row['failure_category']}`。"]
         if row.get("acceptance") is not None:
             lines += ["", "固定验收的实际结果：", "", "```json", json.dumps(row["acceptance"], ensure_ascii=False, indent=2), "```"]
     if report.get("comparison"):
@@ -164,17 +240,22 @@ def save_report(report, folder):
     (folder / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run_suite(label, repeat=1, max_model_calls=8, baseline=None):
+def run_suite(label, repeat=1, max_model_calls=8, baseline=None, release_candidate=False):
+    if release_candidate and repeat < 3:
+        raise ValueError("候选评测要求 --repeat 至少为 3；不会自动增加真实模型调用。")
     cases, grader, suite_hash = load_suite()
     report = {"schema_version": 1, "suite_hash": suite_hash, "label": label,
               "started_at": datetime.now(timezone.utc).isoformat(), "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
-              "config": {"repeat": repeat, "max_model_calls": max_model_calls, "auto_read": True}, "runs": []}
+              "config": {"repeat": repeat, "max_model_calls": max_model_calls, "auto_read": True,
+                         "release_candidate": release_candidate}, "runs": [],
+              "source_sha256": source_hash(), "source_unchanged": True,
+              "python_version": sys.version.split()[0], "platform": sys.platform}
     report["summary"] = aggregate([], len(cases) * repeat)
     if baseline is not None:
         compare(report, baseline)  # Check compatibility before any model calls.
     try:
         report["git_head"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
-        report["code_dirty"] = bool(subprocess.check_output(["git", "status", "--porcelain", "--", "learn_agent", "tool_call.py", "eval.py", "evals"], cwd=REPO))
+        report["code_dirty"] = bool(subprocess.check_output(["git", "status", "--porcelain", "--", "learn_agent", "tool_call.py", "eval.py", "evals", "requirements.txt", "desktop/requirements-windows.txt"], cwd=REPO))
     except (OSError, subprocess.CalledProcessError):
         report["git_head"], report["code_dirty"] = None, None
     folder = LOG_DIR / "evals" / ("eval-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f-") + uuid4().hex[:8])
@@ -197,26 +278,41 @@ def run_suite(label, repeat=1, max_model_calls=8, baseline=None):
             start = monotonic()
             print(f"\n[固定任务] {case['title']}；第 {number}/{repeat} 次")
             try:
+                if release_candidate:
+                    check_source(report)
                 row["agent_exit_code"] = launch_agent(workspace, case["prompt"], max_model_calls)
                 row["agent_seconds"] = monotonic() - start
                 path, entries = find_run(workspace, previous)
                 row.update(log=str(path), reason=entries[-1]["reason"], usage=entries[-1].get("summary", {}).get("usage", dict.fromkeys(TOKEN_FIELDS)))
                 row["reported_usage"] = entries[-1].get("summary", {}).get("reported_usage", row["usage"])
                 row["model_calls"] = entries[-1].get("summary", {}).get("model_calls")
-                row["checks"], row["acceptance"] = grade(case, workspace, before, entries, grader)
+                if release_candidate:
+                    check_source(report)
+                row["cleanup_unconfirmed"] = any(e["event"] == "tool_result" and e["result"].get("cleanup_succeeded") is False for e in entries)
+                if row["cleanup_unconfirmed"]:
+                    row["checks"], row["acceptance"] = {"cleanup_confirmed": False}, None
+                else:
+                    row["checks"], row["acceptance"] = grade(case, workspace, before, entries, grader)
                 row["checks"]["cli_exit_zero"] = row["agent_exit_code"] == 0
                 row["passed"] = all(row["checks"].values())
                 cancelled = row["reason"] in ("cancelled", "user_denied")
-                if row["acceptance"] and row["acceptance"].get("cleanup_succeeded") is False:
+                if row["cleanup_unconfirmed"] or row["acceptance"] and row["acceptance"].get("cleanup_succeeded") is False:
                     cancelled = True
-                    row["error"] = "验收进程清理未确认，停止后续评测。"
+                    row["passed"], row["cleanup_unconfirmed"] = False, True
+                    row["error"] = "工具或验收进程清理未确认，停止后续评测。"
+                if release_candidate:
+                    check_source(report)
             except KeyboardInterrupt:
-                row.update(reason="cancelled", agent_seconds=monotonic() - start, error="评测已取消；保留已完成结果，不启动后续题目。")
+                row.update(passed=False, reason="cancelled", agent_seconds=monotonic() - start, error="评测已取消；保留已完成结果，不启动后续题目。")
                 cancelled = True
             except (ValueError, OSError) as error:
                 row["error"] = str(error)
                 if row["agent_seconds"] == 0.0:
                     row["agent_seconds"] = monotonic() - start
+                row["passed"] = False
+            if not report["source_unchanged"]:
+                cancelled = True
+            row["failure_category"] = failure_category(row)
             report["runs"].append(row)
             report["summary"] = aggregate(report["runs"], len(cases) * repeat)
             if cancelled:
@@ -231,6 +327,8 @@ def run_suite(label, repeat=1, max_model_calls=8, baseline=None):
         if cancelled:
             break
     print(f"\n[评测汇总] {json.dumps(report['summary'], ensure_ascii=False)}\n[JSON] {folder / 'report.json'}\n[Markdown] {folder / 'report.md'}")
+    if release_candidate:
+        print(f"[候选检查] {'通过' if report['release_checks']['passed'] else '未通过'}；仅覆盖本组 CLI 固定任务。")
     return folder / "report.json", report
 
 
@@ -240,9 +338,12 @@ def main():
     parser.add_argument("--repeat", type=int, default=1, choices=range(1, 6), help="每题独立重复次数，默认1，最多5")
     parser.add_argument("--max-model-calls", type=int, default=8, choices=range(1, 33), help="每题模型请求上限，默认8，最多32")
     parser.add_argument("--compare", metavar="REPORT", help="对照同题目和重复次数的旧 JSON 报告")
+    parser.add_argument("--release-candidate", action="store_true", help="要求每题至少重复3次，检查全通过、用量完整与源码版本；未通过时退出码为1")
     args = parser.parse_args()
     try:
         baseline = json.loads(Path(args.compare).read_text(encoding="utf-8")) if args.compare else None
-        run_suite(args.label, args.repeat, args.max_model_calls, baseline)
+        _, report = run_suite(args.label, args.repeat, args.max_model_calls, baseline, args.release_candidate)
+        if args.release_candidate and not report["release_checks"]["passed"]:
+            raise SystemExit(1)
     except (ValueError, OSError, KeyError, TypeError) as error:
         raise SystemExit(f"评测停止：{error}") from None
