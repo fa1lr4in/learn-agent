@@ -15,11 +15,35 @@ ROOT = Path(__file__).resolve().parent.parent
 STAGE = ROOT / "build" / "windows"
 PYTHON_URL = "https://api.nuget.org/v3-flatcontainer/python/3.13.9/python.3.13.9.nupkg"
 PYTHON_SHA256 = "ea7541c98f77b6f344460b88db6e677573069979bcbf0ba18747cc2c125aba25"
+SOURCE_PATTERNS = (
+    "api.py", "learn_agent/**/*.py", "web/*.js", "web/*.css", "web/*.html",
+    "desktop/*.cjs", "desktop/*.html", "desktop/*.css", "desktop/*.js",
+    "desktop/package.json", "desktop/package-lock.json", "desktop/requirements-windows.txt",
+    "desktop/demo_project/**/*.py", "scripts/build_windows.py",
+    "LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "SECURITY.md",
+)
 
 
 def digest(file):
     with file.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def build_source():
+    files = {}
+    for pattern in SOURCE_PATTERNS:
+        for file in sorted(ROOT.glob(pattern)):
+            if file.is_file() and "__pycache__" not in file.parts:
+                if file.is_symlink():
+                    raise ValueError(f"构建来源不能是符号链接：{file}")
+                files[file.relative_to(ROOT).as_posix()] = digest(file)
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    dirty = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *SOURCE_PATTERNS], cwd=ROOT, text=True
+    ).strip()
+    encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"commit": commit, "dirty": bool(dirty),
+            "sha256": hashlib.sha256(encoded).hexdigest(), "files": files}
 
 
 def run(*args, cwd=ROOT):
@@ -44,6 +68,9 @@ def main():
     node = shutil.which("node")
     if not node or not (ROOT / "desktop/node_modules/electron-builder/cli.js").is_file():
         raise SystemExit("请先安装 Node.js 与 desktop 的锁定依赖，参见 README。")
+    source = build_source()
+    if source["dirty"]:
+        raise SystemExit("构建输入存在未提交修改，请先提交本次程序、构建配置和发行说明；练习与文章不影响构建。")
     # The cache is reusable; every download is verified before extraction.
     cache = ROOT / "build/cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -83,7 +110,7 @@ def main():
     copy_files(ROOT / "web", STAGE / "app/web", ["*.js", "*.css", "*.html"])
     copy_files(ROOT / "desktop", STAGE / "app/desktop", ["*.cjs", "*.html", "*.css", "*.js"])
     (STAGE / "app/desktop/build-config.cjs").unlink()
-    copy_files(ROOT, STAGE / "app", ["LICENSE", "THIRD_PARTY_NOTICES.md"])
+    copy_files(ROOT, STAGE / "app", ["LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "SECURITY.md"])
     copy_files(ROOT / "desktop/demo_project", STAGE / "demo_project", ["**/*.py"])
     metadata = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     app_metadata = {"name": metadata["name"], "version": metadata["version"],
@@ -95,7 +122,7 @@ def main():
     key = os.environ.get("DEEPSEEK_API_KEY", "").encode()
     if key and any(key in file.read_bytes() for file in source_files if file.is_file()):
         raise SystemExit("构建来源包含当前模型密钥，已中止。")
-    manifest = {"version": metadata["version"], "platform": "win32-x64", "python": "3.13.9",
+    manifest = {"version": metadata["version"], "platform": "win32-x64", "source": source, "python": "3.13.9",
                 "python_url": PYTHON_URL, "python_sha256": PYTHON_SHA256,
                 "electron": metadata["devDependencies"]["electron"],
                 "files": {str(file.relative_to(STAGE)).replace("\\", "/"): digest(file)
@@ -104,6 +131,8 @@ def main():
     run(node, ROOT / "desktop/node_modules/electron/cli.js", "--version")
     run(node, ROOT / "desktop/node_modules/electron-builder/cli.js", "--projectDir", ROOT / "desktop",
         "--config", "build-config.cjs", "--win", "nsis", "--x64", "--publish", "never")
+    if build_source() != source:
+        raise SystemExit("构建期间源码或提交发生变化，本次产物不能用于发布，请重新构建。")
     installer = ROOT / "dist" / f"learn-agent-Setup-{metadata['version']}-x64.exe"
     (installer.parent / "SHA256SUMS.txt").write_text(f"{digest(installer)}  {installer.name}\n", encoding="utf-8")
     print(f"安装包：{installer}\nSHA256：{digest(installer)}", flush=True)

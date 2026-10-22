@@ -15,12 +15,22 @@ test("shipping Python and API run tools, persist and reopen with no developer pa
   const bundled = path.join(resources, "backend"), python = path.join(bundled, "python/python.exe");
   assert.ok(fs.existsSync(python), "Build Windows first, or point LEARN_AGENT_PACKAGE_RESOURCES at an installed app.");
   const manifest = JSON.parse(fs.readFileSync(path.join(resources, "build-manifest.json"), "utf8"));
+  const appPackage = JSON.parse(asar.extractFile(path.join(resources, "app.asar"), "package.json").toString("utf8"));
+  assert.equal(appPackage.version, manifest.version);
+  assert.match(manifest.source.commit, /^[0-9a-f]{40}$/);
+  assert.equal(manifest.source.dirty, false);
+  const sourceFiles = Object.fromEntries(Object.entries(manifest.source.files).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  assert.equal(createHash("sha256").update(JSON.stringify(sourceFiles)).digest("hex"), manifest.source.sha256);
   for (const [relative, expected] of Object.entries(manifest.files)) {
     const file = path.resolve(resources, relative);
     assert.ok(file.startsWith(resources + path.sep));
     const bytes = relative.startsWith("app/") ?
       asar.extractFile(path.join(resources, "app.asar"), relative.slice(4)) : fs.readFileSync(file);
     assert.equal(createHash("sha256").update(bytes).digest("hex"), expected, relative);
+    const sourcePath = relative.startsWith("backend/") ? relative.slice(8) :
+      relative.startsWith("app/desktop/") || relative.startsWith("app/web/") ? relative.slice(4) :
+      relative.startsWith("demo_project/") ? `desktop/${relative}` : relative.startsWith("app/") ? relative.slice(4) : null;
+    if (sourcePath && manifest.source.files[sourcePath]) assert.equal(expected, manifest.source.files[sourcePath], sourcePath);
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "learn-agent-package-"));
   const project = path.join(root, "中文 project"), logs = path.join(root, "用户 logs");
