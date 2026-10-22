@@ -4,6 +4,62 @@
 
 课程进度、完整开发路线和公众号写作节点见 [学习与开发总计划](学习与开发总计划.md)。
 
+## v1.0 发布准备
+
+第 53 课三题各三次的真实 CLI 候选评测已验收。第 54 课把后续源码修复整合为 1.0.0 Windows x64 本地安装包；当前尚未公开 GitHub Release，安装版真实模型与独立干净机器验收仍待完成。版本号不代表所有 Agent 能力已实现。
+
+本次只改发布相关内容：desktop/package.json 与锁文件更新版本；scripts/build_windows.py 在清单中记录 Git 提交、构建输入文件哈希及总指纹，拒绝未提交输入并核对构建期间来源未变；安装包附带 CHANGELOG.md、SECURITY.md 与第三方声明。tests/test_windows_build.py 检查来源记录和本地资料排除，test_windows_package.cjs 核对实际资源、版本和来源指纹。模型与工具循环没有变化，也不重新调用付费 API 跑候选评测。
+
+本地已完成：504 项 Python、36 项桌面、26 项前端检查通过；安装器构建成功，3184 项清单资源哈希与版本、来源指纹全部一致。将分发资源复制到含中文和空格的临时目录，限制开发路径后，自带 Python 真实运行四项测试通过、入口 42/14.0，两次执行分别审批，停止后重启可恢复历史；模型使用固定回复，未调用 API。安装版真实 DeepSeek、拒绝/停止交互与独立干净 Windows 仍按下文单独验收。构建源码为 454058e3356c38c76612982edfa97a46f9d59996，对应 [Windows CI 已通过](https://github.com/fa1lr4in/learn-agent/actions/runs/39746425464)。
+
+构建输入仅限程序、构建配置、固定依赖和发行文档。workspace、公众号文章、logs、.venv 和本机密钥不进入包；这些本地资料存在未提交修改时，不阻止构建。构建前先提交实际程序与发行说明，再运行：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+npm.cmd run build:win --prefix .\desktop
+if ($LASTEXITCODE -ne 0) { throw 'Windows 构建失败。' }
+npm.cmd run test:package --prefix .\desktop
+if ($LASTEXITCODE -ne 0) { throw '分发资源验收失败。' }
+```
+
+已有依赖无需重复安装。构建需要网络下载运行时依赖，不调用模型。安装包位于 dist/learn-agent-Setup-1.0.0-x64.exe，SHA256SUMS.txt 对应本次最新构建；旧 0.1.0 安装器保留，但不能用更新后的校验文件校验旧包。
+
+安装版真实验收先准备一个全新练习目录，避免旧示例修改影响预期。下面从仓库专用分发示例复制，既不修改 workspace，也不覆盖已有用户项目：
+
+```powershell
+Set-Location -LiteralPath 'C:\Users\macbook\Desktop\科研\Agent安全\learn-agent'
+$releaseInstaller = Join-Path $PWD 'dist\learn-agent-Setup-1.0.0-x64.exe'
+$releaseSum = (Get-Content -LiteralPath .\dist\SHA256SUMS.txt -Raw -Encoding UTF8).Trim()
+$expectedHash, $expectedName = $releaseSum -split '\s+', 2
+if ($expectedName -ne (Split-Path -Leaf $releaseInstaller) -or
+    (Get-FileHash -LiteralPath $releaseInstaller -Algorithm SHA256).Hash -ne $expectedHash) {
+    throw '安装器名称或 SHA256 与本次校验文件不一致。'
+}
+$releaseProject = Join-Path $env:LOCALAPPDATA ('learn-agent-release-checks\' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $releaseProject -Force | Out-Null
+Copy-Item -Path .\desktop\demo_project\* -Destination $releaseProject -Recurse
+Write-Host "本次选择的项目：$releaseProject"
+Start-Process -FilePath $releaseInstaller
+```
+
+先关闭正在运行的旧版和源码版，再完成安装，从开始菜单打开 learn-agent。设置诊断应显示 packaged=true、version=1.0.0、pythonExists=true；日志目录应在用户数据目录。选择上面打印的新项目，使用已有配置或首次保存模型配置。密钥不要发到聊天里。
+
+新建会话，发送：
+
+```text
+先读取 main.py，把 main() 中的 values 从 [7, 14, 21] 局部修改为 [8, 16, 24]；只修改 main.py，不改业务函数和测试。然后用 run_command 执行 python -m unittest -v test_stats.py，再用 run_python 运行 main.py。修改和两次运行都分别等我确认，最后根据真实工具结果简要报告。
+```
+
+预期分别确认一次编辑、两次执行；四项测试通过，入口为 count=3、total=48、average=16.0、min=8、max=24；最终 completed / stop、会话已保存。关闭重开，最近项目和这次历史应恢复，不重放工具。继续这条历史提问“刚才修改了哪个文件，入口的 total 和 average 是多少？不要调用工具”，应能回答 main.py、48 和 16.0。
+
+再新建会话发送“只用 run_python 运行 main.py，不读取或修改任何文件”，在确认处拒绝：应无执行结果，文件不变。另开一次相同任务，在审批处点击停止：应 cancelled，关闭重开后没有自行执行。拒绝与停止各使用独立新会话。
+
+独立干净 Windows 10/11 x64 电脑或虚拟机上，只复制安装器与校验文件；使用安装版首次准备的 projects/demo_project（默认在 %APPDATA%\learn-agent-desktop 下）重复任务，不依赖源码、Node.js、系统 Python 或 .venv。干净环境结果单独记录，不能用本机临时目录检查替代。
+
+公开发布前确认最终安装包真实验收、干净机器结果及对应源码 CI；再为确定的源码提交创建 v1.0.0 标签和 GitHub Release，附安装器、SHA256SUMS.txt、使用说明、实际验证范围与已知限制。当前不创建公开 Release，不写公众号。
+
+首发范围是本机编程工作台。MCP 仍为实验性 stdio 接入、真实模型联合验收暂缓；Skill、插件与只读子任务通过 CLI 显式启用，尚未提供完整桌面配置。没有操作系统沙箱、代码签名或自动更新。后续先积累真实问题与固定评测，再按需要扩展浏览器操作、AST/LSP、长期记忆与并行协作。
+
 ## 从源码开始
 
 完整开发环境当前验证 Windows x64、Python 3.13.9、Node.js 24.16.0 和 Git。先安装这些工具，再在准备存放项目的目录执行：
@@ -212,6 +268,8 @@ $securityEvents | Select-Object -Last 1 | Select-Object event, task_state, reaso
 本次完整回归为 488 项 Python、35 项桌面 Node 和 26 项前端检查通过。README 的练习准备、强制恶意写入请求的拒绝与探针执行步骤已用独立临时项目、固定模型回复复核，未额外调用 DeepSeek；使用者随后已完成真实验收：15 项与 6 项检查通过，被禁用工具执行数为 0、未创建 bypass.txt；探针输出 FAKE-OUTSIDE-DATA、key_present=false，最终 completed / stop。
 
 ## Windows 构建与安装
+
+本节保留首次 0.1.0 安装与验收记录；当前 1.0.0 本地安装包和最终验收见前面的“v1.0 发布准备”。
 
 第 49 课已由使用者完成真实验收：首次设置、加密密钥保存、空密钥重启、saved 来源、两次审批、四项测试、入口 42/14.0、会话保存与最近项目恢复均正常。第 50 课增加 Windows x64 安装包，版本为 0.1.0。
 
